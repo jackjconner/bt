@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 
 import numpy as np
@@ -40,6 +40,23 @@ class BacktestResult:
     nav_history: pl.DataFrame       # date, nav            — O(n_dates)
     trade_log: pl.DataFrame         # date, id, quantity   — O(n_rebalances * n_assets)
     final_positions: np.ndarray     # (n_assets,)          — O(n_assets)
+    # Production fields — default to empty so legacy construction sites still work.
+    fill_log: pl.DataFrame = field(
+        default_factory=lambda: pl.DataFrame(
+            {"date": pl.Series([], dtype=pl.Date),
+             "id": pl.Series([], dtype=pl.Int64),
+             "shares": pl.Series([], dtype=pl.Float64),
+             "fill_price": pl.Series([], dtype=pl.Float64),
+             "cost": pl.Series([], dtype=pl.Float64),
+             "slippage": pl.Series([], dtype=pl.Float64)}
+        )
+    )
+    cash_history: pl.DataFrame = field(
+        default_factory=lambda: pl.DataFrame(
+            {"date": pl.Series([], dtype=pl.Date),
+             "cash": pl.Series([], dtype=pl.Float64)}
+        )
+    )
 
 
 @dataclass(frozen=True)

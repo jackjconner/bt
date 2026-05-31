@@ -5,6 +5,7 @@ from .engine import (
     BacktestResult,
     PortfolioState,
 )
+from .engine_pro import ProductionBacktestConfig, ProductionBacktestEngine
 from .signals import SignalFrame
 
 __all__ = [
@@ -14,4 +15,6 @@ __all__ = [
     "BacktestResult",
     "PortfolioState",
     "SignalFrame",
+    "ProductionBacktestConfig",
+    "ProductionBacktestEngine",
 ]
