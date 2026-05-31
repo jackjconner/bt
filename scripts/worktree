@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+# Spin up a git worktree under .worktrees/ and drop into Claude Code there.
+#
+# Worktrees live in .worktrees/ (gitignored) per the repo's improvement-loop
+# convention, so parallel branches don't collide in the main checkout. This
+# creates a new branch (or checks out an existing one), adds its worktree, and
+# execs `claude` inside it. When you exit Claude the worktree stays put; remove
+# it with `git worktree remove .worktrees/<slug>` when you're done.
+#
+# usage: scripts/worktree [-b BASE] <branch> [claude-arg ...]
+#   -b BASE        base ref for a NEW branch (default: main); ignored if <branch> exists
+#   <branch>       branch to create or check out (e.g. improve/portfolio-fast-opt)
+#   claude-arg...  forwarded to `claude` (e.g. an initial prompt)
+set -euo pipefail
+
+base=main
+while getopts ":b:" opt; do
+  case "$opt" in
+    b) base="$OPTARG" ;;
+    *) echo "usage: scripts/worktree [-b BASE] <branch> [claude-arg ...]" >&2; exit 2 ;;
+  esac
+done
+shift "$((OPTIND - 1))"
+
+if [ "$#" -lt 1 ]; then
+  echo "usage: scripts/worktree [-b BASE] <branch> [claude-arg ...]" >&2
+  exit 2
+fi
+
+branch="$1"
+shift
+
+command -v claude >/dev/null 2>&1 || {
+  echo "worktree: 'claude' not found on PATH" >&2
+  exit 1
+}
+
+root="$(git rev-parse --show-toplevel)"
+slug="${branch//\//-}"
+path="$root/.worktrees/$slug"
+
+if [ -e "$path" ]; then
+  echo "worktree: $path already exists — remove it or pick another branch" >&2
+  exit 2
+fi
+
+if git show-ref --verify --quiet "refs/heads/$branch"; then
+  git worktree add "$path" "$branch"
+else
+  git worktree add "$path" -b "$branch" "$base"
+fi
+
+echo "worktree: $path  (branch $branch)"
+cd "$path"
+exec claude "$@"

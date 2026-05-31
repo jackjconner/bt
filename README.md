@@ -59,6 +59,7 @@ runs lint + types before committing:
 
 ```bash
 scripts/committer "type(scope): subject" path/to/file ...   # ruff + ty gated; never --no-verify
+scripts/worktree <branch>                                  # new .worktrees/<branch> + launch Claude Code there
 uv run pytest -q                                            # 458 tests (unit + tests/integration/)
 uv run ruff check && uv run ruff format --check             # lint + format (line-length 100)
 uv run ty check                                             # strict types, error-on-warning
