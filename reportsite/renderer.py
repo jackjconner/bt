@@ -15,6 +15,7 @@ The palette mirrors the oversight deck (warm bone/amber/green/cyan on dark).
 
 from __future__ import annotations
 
+import hashlib
 import re
 import shutil
 from pathlib import Path
@@ -237,6 +238,36 @@ def _html_escape(text: str) -> str:
     )
 
 
+def _livereload_script(root_rel: str) -> str:
+    """A dependency-free poller that reloads the page when the site is rebuilt.
+
+    ``render_site`` writes ``_site/build-id.txt`` (a content hash) on every
+    render; the served page fetches it once a second and reloads when the hash
+    changes.  So a rebuilt site (e.g. after the ``post-commit`` hook fires on a
+    new report) refreshes open tabs with no websocket/livereload dependency.
+    """
+    build_id_url = f"{root_rel}build-id.txt"
+    return (
+        "<script>\n"
+        "(function () {\n"
+        "  var current = null;\n"
+        "  function poll() {\n"
+        f"    fetch('{build_id_url}', {{cache: 'no-store'}})\n"
+        "      .then(function (r) { return r.ok ? r.text() : Promise.reject(); })\n"
+        "      .then(function (id) {\n"
+        "        id = id.trim();\n"
+        "        if (current === null) { current = id; return; }\n"
+        "        if (id !== current) { location.reload(); }\n"
+        "      })\n"
+        "      .catch(function () {});\n"
+        "  }\n"
+        "  setInterval(poll, 1000);\n"
+        "  poll();\n"
+        "})();\n"
+        "</script>"
+    )
+
+
 def _base_html(title: str, body_html: str, *, root_rel: str = "") -> str:
     """Wrap ``body_html`` in a full HTML document with inline CSS."""
     marked_src = f"{root_rel}marked.min.js" if root_rel else "marked.min.js"
@@ -251,6 +282,7 @@ def _base_html(title: str, body_html: str, *, root_rel: str = "") -> str:
 <body>
 {body_html}
 <script src="{marked_src}"></script>
+{_livereload_script(root_rel)}
 </body>
 </html>"""
 
@@ -492,8 +524,16 @@ def render_site(reports_dir: Path, index: ReportIndex) -> None:
     site_dir = reports_dir / "_site"
     site_dir.mkdir(parents=True, exist_ok=True)
 
+    # Accumulate a content hash over every rendered page; written to
+    # build-id.txt so the served page's poller (see _livereload_script) can
+    # detect a rebuild and reload open tabs.  The pages embed a constant poll
+    # script, never the hash itself, so there is no circularity.
+    content_hash = hashlib.sha256()
+
     # index.html
-    (site_dir / "index.html").write_text(render_index(index), encoding="utf-8")
+    index_html = render_index(index)
+    (site_dir / "index.html").write_text(index_html, encoding="utf-8")
+    content_hash.update(index_html.encode("utf-8"))
 
     # marked.min.js
     marked_path = site_dir / "marked.min.js"
@@ -511,6 +551,7 @@ def render_site(reports_dir: Path, index: ReportIndex) -> None:
             stem = report.source_path.stem
             page_html = render_report_page(report)
             (round_site_dir / f"{stem}.html").write_text(page_html, encoding="utf-8")
+            content_hash.update(page_html.encode("utf-8"))
 
             # Copy assets directory.
             src_assets = report.source_path.parent / "assets"
@@ -519,3 +560,7 @@ def render_site(reports_dir: Path, index: ReportIndex) -> None:
                 if dst_assets.exists():
                     shutil.rmtree(dst_assets)
                 shutil.copytree(src_assets, dst_assets)
+
+    # build-id.txt — bumped whenever any rendered page changes; the served page
+    # polls it (once a second) and reloads when it differs.
+    (site_dir / "build-id.txt").write_text(content_hash.hexdigest()[:12] + "\n", encoding="utf-8")

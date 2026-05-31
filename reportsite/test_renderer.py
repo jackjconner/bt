@@ -137,3 +137,51 @@ def test_render_site_empty_creates_index(tmp_path: Path) -> None:
     assert (tmp_path / "_site" / "index.html").exists()
     html = (tmp_path / "_site" / "index.html").read_text()
     assert "Awaiting the first swarm" in html
+
+
+def test_render_site_writes_build_id(tmp_path: Path) -> None:
+    reports_dir = _fixture_reports_dir(tmp_path)
+    index = build_index(reports_dir)
+    render_site(reports_dir, index)
+    build_id = reports_dir / "_site" / "build-id.txt"
+    assert build_id.exists()
+    assert build_id.read_text().strip()  # non-empty content hash
+
+
+def test_build_id_changes_when_content_changes(tmp_path: Path) -> None:
+    reports_dir = _fixture_reports_dir(tmp_path)
+    render_site(reports_dir, build_index(reports_dir))
+    first = (reports_dir / "_site" / "build-id.txt").read_text()
+
+    # Mutate a report body → the rendered site changes → build-id must change.
+    (reports_dir / "round-000" / "portfolio.md").write_text(
+        _PORTFOLIO_MD + "\n## Extra\n\nNew content.\n", encoding="utf-8"
+    )
+    render_site(reports_dir, build_index(reports_dir))
+    second = (reports_dir / "_site" / "build-id.txt").read_text()
+    assert first != second
+
+
+def test_build_id_stable_when_content_unchanged(tmp_path: Path) -> None:
+    reports_dir = _fixture_reports_dir(tmp_path)
+    render_site(reports_dir, build_index(reports_dir))
+    first = (reports_dir / "_site" / "build-id.txt").read_text()
+    render_site(reports_dir, build_index(reports_dir))
+    second = (reports_dir / "_site" / "build-id.txt").read_text()
+    assert first == second  # idempotent — no spurious reloads
+
+
+def test_pages_inject_livereload_poll(tmp_path: Path) -> None:
+    reports_dir = _fixture_reports_dir(tmp_path)
+    index = build_index(reports_dir)
+
+    # Index page polls build-id.txt at the site root.
+    idx = render_index(index)
+    assert "build-id.txt" in idx
+    assert "location.reload()" in idx
+
+    # Report page is one level down → polls ../build-id.txt.
+    report = index.rounds[0].reports[0]
+    page = render_report_page(report)
+    assert "../build-id.txt" in page
+    assert "location.reload()" in page
