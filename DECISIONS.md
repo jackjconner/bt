@@ -83,3 +83,35 @@ sweep stops leaked temp from a killed run compounding the next.
 lands on disk (slower than RAM, but unbreakable). The Workflow tool's worktree
 isolation was abandoned for explore rounds in the same incident (it spawned the
 runaway copies); the tournament now runs as supervised `Agent` dispatch.
+
+## 2026-05-31 — No backwards-compat; removal allowed; two-phase add-then-consolidate
+**Context:** The improvement loop enforced additive-only API discipline (never
+remove/rename an exported symbol; new params/fields take defaults). Round 005 (a
+5-way explore) showed the cost: every worker, following the rule, *shadowed* the
+old implementation instead of replacing it — signals kept `engine="matrix"`,
+models kept the non-ridge loop, etl kept `_adjust_single_asset`, backtest kept
+the incumbent loop, analysis kept `analyze` delegating to `analyze_fused`.
+Several retained paths are pure dead shadows kept only because removal was
+forbidden. bt has no external API consumers, so the compat burden buys nothing.
+**Decision:** Drop additive-only. Removing/renaming internal symbols, changing
+signatures, and deleting superseded paths is allowed in **any** round, provided
+every call site is updated and the **golden stays byte-identical**
+(`scripts/gate eval --tolerance 0`) with the integration suite green — those two
+are the guards that a removal didn't change behavior. The *preferred workflow* is
+two-phase: an explore/feature round adds the new path additively (keeping the old
+one as a correctness **oracle** while the change is under review), and a
+dedicated **`consolidate`** round then deletes the superseded path + its flag and
+makes the replacement sole. Removal is permitted outside consolidate rounds too;
+the two-phase split is a safety preference, not a restriction. Supersedes the
+additive-only API discipline previously stated in the loop skills.
+**Rationale:** No external users → backwards-compat is dead weight. Keeping the
+old impl as an oracle during the *innovation* PR is genuinely useful (it's how
+round 005 proved bit-identity); keeping it forever is just cruft. Two phases
+capture the benefit without the cost; the golden-byte-identical bar makes a
+removal as safe as a refactor.
+**Consequences:** New `consolidate` round type (delete the shadow, make the
+replacement sole, golden byte-identical). The loop skills' "additive only"
+sections are rewritten to "removal allowed, prefer two-phase." Round 005 left 5
+shadowed components — the genuinely-dead paths (e.g. signals `engine="matrix"`)
+are the first consolidate targets; functional fallbacks (models' non-ridge loop,
+etl's oracle) stay until truly unused.

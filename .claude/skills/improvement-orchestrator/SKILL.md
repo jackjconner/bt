@@ -16,11 +16,13 @@ carry memory across rounds. One round per invocation; re-invoke for the next.
 ## When to apply
 
 When you are driving a round of making the system better and coordinating
-workers (not doing the change yourself). "Better" is one of four **round types**
+workers (not doing the change yourself). "Better" is one of five **round types**
 — a perf win (`exploit`), a structural cleanup (`refactor`), a new capability
-(`feature`), or a bold rewrite (`explore`) — see Round types below. If the
-contract *must* break, that's a [[design-before-architecture-changes]] talk with
-Jack, not this loop.
+(`feature`), a bold rewrite (`explore`), or a cleanup that removes a superseded
+path (`consolidate`) — see Round types below. Internal API removal within a
+component is fair game (no backwards-compat — see [[DECISIONS]]); only a change
+to a *cross-component data contract* (the shapes components pass each other) is a
+[[design-before-architecture-changes]] talk with Jack.
 
 ## Round types
 
@@ -34,6 +36,7 @@ unchanged.
 | **refactor** | a large/tangled fn or thin-test area | split it up, add unit tests, **no behavior change** | **no regression** (need not improve) | golden **byte-identical** (`--tolerance 0`) | complexity/length down, tests added |
 | **feature** | top of `FEATURE_BACKLOG.md` | **additive** capability behind a flag + tests | no regression on existing stages | existing fields **hold**; new fields ok (`--allow-new-fields`) | capability works under test |
 | **explore** | a bold-rewrite target | **be** the sweeping rewrite — divergence is the point | improved, **or** a justified tie | golden holds, or justified | K-way tournament → judge → hybrid reward |
+| **consolidate** | a component carrying a superseded shadow path from a prior round | **delete** the old impl + its flag, make the replacement sole, update call sites | **no regression** | golden **byte-identical** (`--tolerance 0`) | dead code removed; internal API may shrink |
 
 **Explore cadence.** Count rounds since the last `type: explore` in
 `IMPROVEMENTS.md`; if ≥ 4 non-explore rounds have passed, the next round is
@@ -44,6 +47,17 @@ backlog.
 clearly better / opens flagged headroom **may** merge (your call, justified in the
 writeup). Pure losers are **discarded** — log their learning to `SPIKES.md` and
 record the round `spiked`.
+
+**Two-phase add-then-consolidate.** Explore/feature rounds add a new path
+additively, keeping the incumbent as a correctness oracle while it is reviewed.
+Once it is merged and the golden held, schedule a **`consolidate`** round on that
+component to delete the now-dead shadow + its flag and make the replacement sole
+(golden byte-identical, `scripts/gate eval --tolerance 0`). Removal is allowed in
+any round (no backwards-compat — see [[DECISIONS]]); the two-phase split just
+keeps the oracle around through review. A fallback/oracle still genuinely *used*
+(a non-ridge code path, a test oracle) stays until truly unused. Target source:
+scan recent `IMPROVEMENTS.md` entries for an additive replacement whose old path
+is now dead.
 
 **The explore tournament.** Run it as plain parallel `Agent` dispatch that you
 supervise — no workflow runner, so worktree isolation and cleanup stay under your
@@ -146,8 +160,8 @@ adjudicate are correctness, profiling, and evaluation:
 | gate | command | the bar (by round type) |
 |---|---|---|
 | **correctness** | `scripts/gate test` (unit + `tests/integration/`) | **all types:** still green — same count, no new failures (a broken contract fails in the integration suite). refactor/feature additionally *add* tests. |
-| **profiling** | `scripts/gate bench` → `check_regressions` vs the ratcheted baseline | **exploit:** target metric *improved*. **refactor / feature:** *no regression* past threshold (need not improve). **explore:** *improved, or a justified tie*. |
-| **evaluation** | `scripts/gate eval` → `PipelineSummary` diffed vs the **golden** | **exploit / explore:** golden holds within tolerance, or a justified accuracy move. **refactor:** **byte-identical** (`scripts/gate eval --tolerance 0`). **feature:** existing fields hold + **new fields allowed** (`scripts/gate eval --allow-new-fields`); re-save the golden post-merge to absorb them. |
+| **profiling** | `scripts/gate bench` → `check_regressions` vs the ratcheted baseline | **exploit:** target metric *improved*. **refactor / feature / consolidate:** *no regression* past threshold (need not improve). **explore:** *improved, or a justified tie*. |
+| **evaluation** | `scripts/gate eval` → `PipelineSummary` diffed vs the **golden** | **exploit / explore:** golden holds within tolerance, or a justified accuracy move. **refactor / consolidate:** **byte-identical** (`scripts/gate eval --tolerance 0`) — a consolidate that removes a *dead* path must not move a single number. **feature:** existing fields hold + **new fields allowed** (`scripts/gate eval --allow-new-fields`); re-save the golden post-merge to absorb them. |
 
 Evaluation is the subtle one: a speedup that moves the Sharpe is a correctness
 regression wearing a profiling win's clothes — the golden diff catches it. A
@@ -180,7 +194,9 @@ exists because unit tests pass while numbers silently move.
 The round met **its type's acceptance bar** on the *post-merge* tree (exploit:
 metric improved; refactor: golden byte-identical + cleaner; feature: capability
 under test + golden holds or grows additively; explore: a merged winner, or every
-attempt `spiked`), correctness is green, the baseline is ratcheted, and the round
+attempt `spiked`; consolidate: superseded path + flag removed, golden
+byte-identical, tree cleaner), correctness is green, the baseline is ratcheted,
+and the round
 — **with its `type:`** — is recorded in `IMPROVEMENTS.md` (explore losers in
 `SPIKES.md`). If no PR passed its type's gate, record the rejection and stop —
 don't force a win.
