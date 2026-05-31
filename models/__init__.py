@@ -2,6 +2,7 @@ from ._protocol import FinancialModel
 from .boosting import GradientBoostConfig, GradientBoostModel
 from .compare import ModelComparison, compare_models
 from .cross_val import CVConfig, CVResult, cv_loop
+from .leakage import CheckResult, LeakageReport, audit_leakage
 from .models_zoo import ElasticNetConfig, ElasticNetModel, LassoConfig, LassoModel
 from .panel import PanelArrays, build_panel, date_ordinals
 from .persistence import (
@@ -30,6 +31,7 @@ from .walk_forward import (
 __all__ = [
     "CVConfig",
     "CVResult",
+    "CheckResult",
     "ElasticNetConfig",
     "ElasticNetModel",
     "FinancialModel",
@@ -39,6 +41,7 @@ __all__ = [
     "GradientBoostModel",
     "LassoConfig",
     "LassoModel",
+    "LeakageReport",
     "ModelArtifact",
     "ModelComparison",
     "ModelConfig",
@@ -51,6 +54,7 @@ __all__ = [
     "WalkForwardConfig",
     "WalkForwardSplitter",
     "artifact_from_fold",
+    "audit_leakage",
     "build_panel",
     "compare_models",
     "cv_loop",

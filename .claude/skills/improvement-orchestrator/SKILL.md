@@ -56,8 +56,17 @@ not the worker doing the change. If the contract *must* break, that's a
 7. **Dispatch the docs agent.** A dedicated agent — *not* a worker — reconciles
    in-repo docs (`README.md`, `WORKING_NOTES.md`, `PRODUCTION_PLAN.md`, touched
    docstrings, a `DECISIONS.md` entry for an ADR-worthy call) and commits to
-   `main`. It **flags** stale `~/syl/wiki/projects/bt-backtester` pages via a
-   "Wiki re-verify" note in `WORKING_NOTES.md` — it never overwrites Syl's pages.
+   `main`. It **flags** stale `~/syl/wiki/projects/bt-backtester` pages in
+   `WORKING_NOTES.md` — it never overwrites Syl's pages.
+
+## Emit live state (for the oversight deck)
+
+As the round moves, write `.oversight/round_state.json` so `scripts/oversight`
+shows it live (telegraphic — one command per transition):
+
+- round start (step 1–2): `python -m oversight.state set-target --round N --component C --target … --metric … --baseline … --tolerance …`
+- dispatched (step 3): `set-phase --phase dispatched --dispatched K`; per worker `set-lane --component C --branch … --pr …`
+- as gates resolve (step 4–5): `mark-gate --component C --gate {lint,types,correctness,profiling,evaluation} --verdict {running,pass,fail}`; `set-phase --phase {adjudicating,merging,revalidating,done}`
 
 ## The adjudication bar
 
@@ -74,14 +83,13 @@ adjudicate are correctness, profiling, and evaluation:
 Evaluation is the subtle one: a speedup that moves the Sharpe is a correctness
 regression wearing a profiling win's clothes — the golden diff catches it. A
 genuine accuracy improvement is the one case the numbers *should* move; the
-writeup must say so and show why the new value is correct.
+writeup must say why the new value is correct.
 
 ## Why
 
 Serial-merge with re-validation exists because green-on-branch ≠
 green-after-a-sibling-merged — two passing PRs can interact. The golden diff
-exists because unit tests pass while numbers silently move; the ledgers, so each
-round starts from what's known rather than from scratch.
+exists because unit tests pass while numbers silently move.
 
 ## Anti-patterns
 

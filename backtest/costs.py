@@ -94,3 +94,49 @@ def compute_cash_interest(cash: float, annual_rate: float) -> float:
         Dollar interest accrual for one day (positive = credit, negative = charge).
     """
     return cash * annual_rate / 252.0
+
+
+def compute_financing_cost(
+    weights: np.ndarray,
+    nav: float,
+    borrow_rate_annual: float,
+    funding_rate_annual: float,
+    dt: float,
+) -> float:
+    """Daily financing drag for a leveraged or short portfolio.
+
+    Two components are charged:
+
+    1. **Short borrow** — cost of borrowing shares to maintain short positions:
+       ``sum(max(0, -w_i)) * nav * borrow_rate_annual * dt``
+
+    2. **Leverage funding** — cost of margin debt above 1× gross exposure:
+       ``max(gross_leverage - 1, 0) * nav * funding_rate_annual * dt``
+
+    A long-only, unleveraged portfolio (gross == 1) incurs ~zero cost from both
+    terms (long-only has no shorts; gross == 1 means no excess leverage).
+
+    Parameters
+    ----------
+    weights:
+        Current portfolio weights (n_assets,); negatives indicate shorts.
+    nav:
+        Current NAV in dollars.
+    borrow_rate_annual:
+        Annualized borrow rate applied to the aggregate short market value
+        (fraction, e.g. ``0.005`` for 50 bps).
+    funding_rate_annual:
+        Annualized funding rate applied to leveraged exposure above 1× gross
+        (fraction, e.g. ``0.02`` for 200 bps).
+    dt:
+        Period length as a fraction of a year (e.g. ``1/252`` for daily).
+
+    Returns
+    -------
+    float
+        Total financing cost in dollars for this period (always non-negative).
+    """
+    short_mv = float(np.maximum(-weights, 0.0).sum()) * nav
+    gross_leverage = float(np.abs(weights).sum())
+    excess_leverage = max(gross_leverage - 1.0, 0.0) * nav
+    return (short_mv * borrow_rate_annual + excess_leverage * funding_rate_annual) * dt

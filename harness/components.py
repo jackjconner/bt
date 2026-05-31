@@ -184,7 +184,9 @@ def _portfolio_setup(ctx: BenchmarkContext) -> dict:
 def _portfolio_run(inp: dict) -> dict:
     risk_model = build_from_long(inp["loadings"], inp["fcov"], inp["specific"], inp["as_of"])
     cov = ledoit_wolf_cov(inp["R"])
-    opt = mean_variance(inp["alpha"], cov, inp["cspec"], risk_aversion=1.0, max_iter=3000)
+    opt = mean_variance(
+        inp["alpha"], cov, inp["cspec"], risk_aversion=1.0, max_iter=3000, solver="osqp"
+    )
     var = risk_model.portfolio_variance(opt.weights)
     return {"weights": opt.weights, "variance": var, "converged": opt.converged}
 
