@@ -25,33 +25,27 @@ from .neutralize import (
 )
 from .newey_west import default_lags, newey_west_tstat
 from .quantile import QuantileResult, quantile_spread
+from .regime import RegimeConditionalICResult, detect_regimes, regime_conditional_ic
 from .turnover import TurnoverResult, rank_stability, signal_autocorr, turnover_score
 
 __all__ = [
-    # horizon
     "HorizonCurve",
     "HorizonPoint",
     "ICEvaluator",
-    # new ic
     "ICMethod",
     "ICResult",
-    # combine
     "IncrementalICResult",
-    # multiple testing
     "MultipleTestingResult",
-    # neutralize
     "NeutralizationResult",
-    # quantile
     "QuantileResult",
-    # existing
+    "RegimeConditionalICResult",
     "SignalEvaluator",
-    # turnover
     "TurnoverResult",
-    # coverage
     "apply_min_coverage",
     "bh_correct",
     "bonferroni_correct",
     "default_lags",
+    "detect_regimes",
     "evaluate_neutralization",
     "gram_schmidt_orthogonalize",
     "ic_horizon_curve",
@@ -66,6 +60,7 @@ __all__ = [
     "pairwise_mask",
     "quantile_spread",
     "rank_stability",
+    "regime_conditional_ic",
     "rolling_ic",
     "rolling_ic_ir",
     "signal_autocorr",
