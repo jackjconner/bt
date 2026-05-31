@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 import polars as pl
+import pytest
 
 from profiling.scaling import fit_scaling, fits_to_dataframe
 
@@ -126,3 +127,51 @@ def test_n_points_correct() -> None:
     fits = fit_scaling(_linear_measurements(6), run_id="test")
     n_assets_fits = [f for f in fits if f.scaling_dim == "n_assets"]
     assert all(f.n_points == 6 for f in n_assets_fits)
+
+
+def _anchored_two_axis_measurements() -> pl.DataFrame:
+    """Anchored grid varying n_assets and n_dates on separate axes.
+
+    elapsed_s = 1e-9 * n_assets^2 * n_dates  — quadratic in assets, linear in
+    dates. With confounder control, the n_assets fit (held at the modal n_dates)
+    must recover slope ≈ 2 and the n_dates fit (held at the modal n_assets) ≈ 1.
+    A naive pooled fit would blend the date-sweep points into the n_assets=100
+    column and corrupt both slopes.
+    """
+    # baseline + n_assets sweep @ 252d, then n_dates sweep @ 100 assets
+    points = [
+        (50, 252),
+        (100, 252),  # baseline (modal n_assets=100, modal n_dates=252)
+        (200, 252),
+        (100, 756),
+        (100, 1260),
+        (100, 2016),
+        (100, 5040),
+    ]
+    n_assets = [a for a, _ in points]
+    n_dates = [d for _, d in points]
+    elapsed = [1e-9 * a**2 * d for a, d in points]
+    return pl.DataFrame(
+        {
+            "stage": pl.Series(["signals"] * len(points), dtype=pl.Categorical),
+            "param_point_id": list(range(len(points))),
+            "n_assets": n_assets,
+            "n_dates": n_dates,
+            "n_features": [10] * len(points),
+            "n_factors": [4] * len(points),
+            "elapsed_s": elapsed,
+            "peak_rss_mb": [1.0] * len(points),
+        }
+    )
+
+
+def test_confounder_control_isolates_each_axis() -> None:
+    """On a two-axis grid each dim's slope is fit holding the others at baseline."""
+    fits = fit_scaling(_anchored_two_axis_measurements(), run_id="test")
+    by_dim = {f.scaling_dim: f for f in fits if f.metric == "elapsed_s"}
+    # n_assets sweep is at the modal n_dates (252): elapsed ∝ n_assets^2
+    assert by_dim["n_assets"].log_log_slope == pytest.approx(2.0, abs=0.05)
+    assert by_dim["n_assets"].n_points == 3
+    # n_dates sweep is at the modal n_assets (100): elapsed ∝ n_dates^1
+    assert by_dim["n_dates"].log_log_slope == pytest.approx(1.0, abs=0.05)
+    assert by_dim["n_dates"].n_points == 5
