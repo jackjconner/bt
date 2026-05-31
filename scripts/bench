@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# Serialize CPU-bound benchmark runs across concurrent agents/worktrees so timing
+# measurements aren't corrupted by core contention. Wrap any *timed* command:
+#
+#   scripts/bench uv run main.py
+#   scripts/bench scripts/eval
+#
+# Only one holder runs at a time (a machine-wide flock on a shared lockfile), so
+# the timed run gets the whole machine and clean numbers. Non-timed work — editing,
+# correctness tests, the eval golden's *values* — is contention-insensitive and
+# needs no lock, so it stays fully parallel across agents.
+#
+# When N parallel perf agents each profile through this, their measurement phases
+# queue instead of fighting for cores; wall-clock is the sum of the timed runs, but
+# the numbers are trustworthy. BT_BENCH_LOCK overrides the lockfile; BT_BENCH_WAIT
+# the max seconds to wait for the lock (default 1800).
+set -euo pipefail
+
+if [ "$#" -lt 1 ]; then
+  echo "usage: scripts/bench <command ...>   (e.g. scripts/bench uv run main.py)" >&2
+  exit 2
+fi
+
+LOCK="${BT_BENCH_LOCK:-/tmp/bt-bench.lock}"
+WAIT="${BT_BENCH_WAIT:-1800}"
+exec flock -w "$WAIT" "$LOCK" "$@"
