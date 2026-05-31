@@ -38,6 +38,7 @@ from portfolio import (
 )
 from profiling import capture_environment, fit_scaling, run_trials
 from signals import ic_horizon_curve, ic_series_v2, neutralize_sector
+from strategy import StrategySpec
 
 
 @dataclass(frozen=True)
@@ -73,7 +74,51 @@ def _returns_from_prices(prices: pl.DataFrame) -> pl.DataFrame:
     )
 
 
-def run_production_pipeline(spec: GenSpec, workdir: Path) -> PipelineSummary:
+def run_production_pipeline(
+    spec: GenSpec,
+    workdir: Path,
+    strategy: StrategySpec | None = None,
+) -> PipelineSummary:
+    """Run the end-to-end production pipeline.
+
+    When ``strategy`` is ``None`` the pipeline uses the same hardcoded
+    defaults that existed before ``StrategySpec`` was introduced — output is
+    byte-for-byte identical to the pre-spec behaviour.  Pass a
+    ``StrategySpec`` to control every tunable knob explicitly.
+    """
+    # Resolve knobs: when no strategy is supplied, fall through to the exact
+    # literals that were hardcoded before this parameter existed.
+    if strategy is not None:
+        wf_n_splits = strategy.wf_n_splits
+        wf_embargo = strategy.wf_embargo_periods
+        opt_risk_aversion = strategy.opt_risk_aversion
+        opt_max_iter = strategy.opt_max_iter
+        bt_max_weight = strategy.bt_max_weight
+        bt_enable_umask = strategy.bt_enable_universe_mask
+        bt_enable_costs = strategy.bt_enable_costs
+        bt_enable_slippage = strategy.bt_enable_slippage
+        profile_trials = strategy.profile_trials
+        profile_warmup = strategy.profile_warmup
+        bt_profile_trials = strategy.bt_profile_trials
+        bt_profile_warmup = strategy.bt_profile_warmup
+        neutralize_sectors = strategy.neutralize_sectors
+        horizon_map = strategy.horizon_map
+    else:
+        wf_n_splits = 4
+        wf_embargo = 5
+        opt_risk_aversion = 1.0
+        opt_max_iter = 3000
+        bt_max_weight = 0.1
+        bt_enable_umask = True
+        bt_enable_costs = True
+        bt_enable_slippage = True
+        profile_trials = 3
+        profile_warmup = 1
+        bt_profile_trials = 3
+        bt_profile_warmup = 1
+        neutralize_sectors = True
+        horizon_map = {1: "fwd_ret_1", 5: "fwd_ret_5", 21: "fwd_ret_21", 63: "fwd_ret_63"}
+
     write_all(workdir, spec)
     loader = DatasetLoader(workdir, spec)
 
@@ -92,13 +137,12 @@ def run_production_pipeline(spec: GenSpec, workdir: Path) -> PipelineSummary:
 
     # --- signals: IC, neutralization, horizon decay ---------------------- #
     ic_raw = to_float(ic_series_v2(momentum, fwd, return_col="fwd_ret_1")["ic"].mean())
-    neutral = neutralize_sector(momentum, sec_master)
-    ic_neut = to_float(ic_series_v2(neutral, fwd, return_col="fwd_ret_1")["ic"].mean())
-    curve = ic_horizon_curve(
-        momentum,
-        fwd,
-        {1: "fwd_ret_1", 5: "fwd_ret_5", 21: "fwd_ret_21", 63: "fwd_ret_63"},
-    )
+    if neutralize_sectors:
+        neutral = neutralize_sector(momentum, sec_master)
+        ic_neut = to_float(ic_series_v2(neutral, fwd, return_col="fwd_ret_1")["ic"].mean())
+    else:
+        ic_neut = ic_raw
+    curve = ic_horizon_curve(momentum, fwd, horizon_map)
     horizon_ic = {p.horizon: float(p.mean_ic) for p in curve.points}
 
     # --- models: purged walk-forward CV on the feature panel ------------- #
@@ -110,7 +154,7 @@ def run_production_pipeline(spec: GenSpec, workdir: Path) -> PipelineSummary:
     )
     wf = walk_forward_cv(
         panel,
-        WalkForwardSplitter(n_splits=4, embargo_periods=5),
+        WalkForwardSplitter(n_splits=wf_n_splits, embargo_periods=wf_embargo),
         lambda alpha: RidgeModel(ModelConfig(n_features=spec.n_features, alpha=alpha)),
     )
 
@@ -134,7 +178,9 @@ def run_production_pipeline(spec: GenSpec, workdir: Path) -> PipelineSummary:
         long_only=False,
         net_exposure=1.0,
     )
-    opt = mean_variance(alpha_vec, cov, cspec, risk_aversion=1.0, max_iter=3000)
+    opt = mean_variance(
+        alpha_vec, cov, cspec, risk_aversion=opt_risk_aversion, max_iter=opt_max_iter
+    )
     factor_vol = float(np.sqrt(max(risk_model.portfolio_variance(opt.weights), 0.0)))
     bench_w = np.full(spec.n_assets, 1.0 / spec.n_assets)
     te = tracking_error(opt.weights, bench_w, cov)
@@ -144,16 +190,16 @@ def run_production_pipeline(spec: GenSpec, workdir: Path) -> PipelineSummary:
     gross_cfg = ProductionBacktestConfig(
         n_assets=spec.n_assets,
         n_dates=spec.n_dates,
-        enable_universe_mask=True,
-        max_weight=0.1,
+        enable_universe_mask=bt_enable_umask,
+        max_weight=bt_max_weight,
     )
     net_cfg = ProductionBacktestConfig(
         n_assets=spec.n_assets,
         n_dates=spec.n_dates,
-        enable_universe_mask=True,
-        enable_costs=True,
-        enable_slippage=True,
-        max_weight=0.1,
+        enable_universe_mask=bt_enable_umask,
+        enable_costs=bt_enable_costs,
+        enable_slippage=bt_enable_slippage,
+        max_weight=bt_max_weight,
     )
     gross = ProductionBacktestEngine(gross_cfg).run(
         returns, signals, prices=prices, transaction_costs=tcosts, universe_mask=umask
@@ -170,15 +216,15 @@ def run_production_pipeline(spec: GenSpec, workdir: Path) -> PipelineSummary:
     cost_drag = float(gross.nav_history["nav"][-1] - net.nav_history["nav"][-1])
 
     # --- profiling: trials + scaling fit --------------------------------- #
-    capture_environment("pipeline_run", trials=3, warmup_trials=1)
+    capture_environment("pipeline_run", trials=profile_trials, warmup_trials=profile_warmup)
     trial = run_trials(
         "backtest",
         lambda: ProductionBacktestEngine(net_cfg).run(
             returns, signals, prices=prices, transaction_costs=tcosts, universe_mask=umask
         ),
         lambda r: {"nav": r.nav_history},
-        n_trials=3,
-        warmup=1,
+        n_trials=bt_profile_trials,
+        warmup=bt_profile_warmup,
     )
     fits = fit_scaling(loader.load("stage_measurements"), run_id="run_0000")
 
@@ -198,6 +244,14 @@ def run_production_pipeline(spec: GenSpec, workdir: Path) -> PipelineSummary:
         n_scaling_fits=len(fits),
         backtest_p50_s=float(trial.elapsed_p50),
     )
+
+
+def run_from_spec(strategy: StrategySpec, workdir: Path) -> PipelineSummary:
+    """Convenience wrapper: run the pipeline fully from a ``StrategySpec``.
+
+    Equivalent to ``run_production_pipeline(strategy.gen, workdir, strategy)``.
+    """
+    return run_production_pipeline(strategy.gen, workdir, strategy)
 
 
 def print_pipeline_summary(s: PipelineSummary) -> None:
@@ -221,5 +275,6 @@ def print_pipeline_summary(s: PipelineSummary) -> None:
 __all__ = [
     "PipelineSummary",
     "print_pipeline_summary",
+    "run_from_spec",
     "run_production_pipeline",
 ]
