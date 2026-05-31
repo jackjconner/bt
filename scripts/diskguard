@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# diskguard — keep the improvement loop's heavy runs off the RAM-backed /tmp.
+#
+# bt's harness / pipeline / evalgate write large per-run parquet panels via
+# tempfile.mkdtemp(), which honors $TMPDIR. On this box $TMPDIR defaults to
+# /tmp — a 16G RAM-backed tmpfs — so a few concurrent runs (or leaked temp from
+# killed runs) exhaust it; every write then fails with EDQUOT, which cascades
+# into git aborting (SIGABRT) and the shell dying. That is what capsized the
+# first explore round: 3 worktree workers each ran the harness into tmpfs.
+#
+# diskguard (1) sweeps leaked bt/bench temp, (2) points heavy temp at real disk,
+# (3) refuses to proceed if that disk is dangerously low. SOURCE it to export the
+# safe TMPDIR into your shell before a round:
+#
+#     . scripts/diskguard && uv run main.py
+#
+# or run it (`scripts/diskguard`) as a standalone preflight + sweep.
+
+BT_TMPDIR="${BT_TMPDIR:-$HOME/.cache/bt-tmp}"
+_min_free_gb="${BT_MIN_TMP_GB:-10}"
+
+mkdir -p "$BT_TMPDIR"
+
+# 1. Sweep leaked bt/bench temp from tmpfs /tmp, the current TMPDIR, and the
+#    disk temp — only dirs older than a minute, so a live run is never touched.
+for _d in /tmp "${TMPDIR:-/tmp}" "$BT_TMPDIR"; do
+  [ -d "$_d" ] || continue
+  find "$_d" -maxdepth 1 -type d \
+    \( -name 'bt_*' -o -name 'bench_rm_*' -o -name 'bt_flame_data_*' \) \
+    -mmin +1 -exec rm -rf {} + 2>/dev/null
+done
+
+# 2. Check the disk-temp filesystem.
+_fstype="$(findmnt -no FSTYPE -T "$BT_TMPDIR" 2>/dev/null)"
+_avail_gb="$(df -BG --output=avail "$BT_TMPDIR" 2>/dev/null | tail -1 | tr -dc '0-9')"
+echo "diskguard: heavy temp -> $BT_TMPDIR (${_fstype:-?}, ${_avail_gb:-?}G free)"
+
+if [ "$_fstype" = tmpfs ]; then
+  echo "diskguard: ERROR — $BT_TMPDIR is on tmpfs (RAM). Set BT_TMPDIR to a disk path." >&2
+  return 1 2>/dev/null || exit 1
+fi
+if [ "${_avail_gb:-0}" -lt "$_min_free_gb" ]; then
+  echo "diskguard: ERROR — only ${_avail_gb}G free on $BT_TMPDIR (need ${_min_free_gb}G)." >&2
+  return 1 2>/dev/null || exit 1
+fi
+
+# 3. Redirect this shell's temp to disk so `uv run main.py` / evalgate / the
+#    harness (and tempfile.mkdtemp anywhere downstream) never touch tmpfs.
+export TMPDIR="$BT_TMPDIR"
+echo "diskguard: OK — TMPDIR=$TMPDIR (off tmpfs)."

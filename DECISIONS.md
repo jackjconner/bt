@@ -62,3 +62,24 @@ anywhere relative to the repo.
 makes the trees easy to find and prune, and avoids them ever being staged.
 **Consequences:** `.worktrees/` added to `.gitignore`; the
 `improvement-orchestrator` and `component-improvement-loop` skills name the path.
+
+## 2026-05-30 — Heavy run temp goes to disk, not tmpfs `/tmp`
+**Context:** The harness, production pipeline, and evalgate each write GB-scale
+per-run parquet panels via `tempfile.mkdtemp()`, which honors `$TMPDIR`. On this
+box `$TMPDIR` defaults to `/tmp`, a 16G RAM-backed tmpfs. The first explore round
+dispatched 3 worktree workers that each ran the harness into `/tmp`; tmpfs filled,
+every write failed with `EDQUOT`, git could no longer write its index and aborted
+(SIGABRT), and the interactive shell died — a full cascade from one full RAM disk.
+It masqueraded as a disk quota; `/home` is plain ext4 with no quota and ~900G free.
+**Decision:** Add `scripts/diskguard`: sweeps leaked `bt_*`/`bench_*` temp, points
+heavy temp at a disk path (`$BT_TMPDIR`, default `~/.cache/bt-tmp` on the ext4 home
+fs), and refuses to proceed if that fs is tmpfs or low on space. Source it before
+any harness/pipeline/evalgate run. The `improvement-orchestrator` and
+`component-improvement-loop` skills make it a preflight.
+**Rationale:** A single `export TMPDIR=<disk>` redirects every downstream
+`mkdtemp` (harness internals included) off RAM in one lever, no code change. The
+sweep stops leaked temp from a killed run compounding the next.
+**Consequences:** Rounds must `source scripts/diskguard` first; large temp now
+lands on disk (slower than RAM, but unbreakable). The Workflow tool's worktree
+isolation was abandoned for explore rounds in the same incident (it spawned the
+runaway copies); the tournament now runs as supervised `Agent` dispatch.

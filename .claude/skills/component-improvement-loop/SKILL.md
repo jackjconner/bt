@@ -45,6 +45,13 @@ ruled out, and the declared metric + eval tolerance. Your mandate — and what
 
 ## The gates (your PR must pass all of them — run and quote each)
 
+**First: `source scripts/diskguard`.** The profiling and evaluation gates run the
+harness / pipeline, which write GB-scale parquet to `$TMPDIR` — a RAM-backed
+`/tmp` by default. Without redirecting that to disk, concurrent workers fill
+tmpfs, writes fail with `EDQUOT`, and git aborts. diskguard redirects heavy temp
+to disk and sweeps stale temp; run it before any gate.
+
+
 | gate | command | the bar |
 |---|---|---|
 | **lint** | `uv run ruff check` + `ruff format --check` | clean; warnings are errors. Enforced on *every* commit by `scripts/committer`. |

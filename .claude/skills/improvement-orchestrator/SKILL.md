@@ -61,6 +61,13 @@ control. Given a target and K (3–4) deliberately *divergent* strategy briefs
 
 ## The round
 
+**Preflight — `source scripts/diskguard` before any run, and have every worker do
+the same.** The harness / pipeline / evalgate write GB-scale parquet to `$TMPDIR`,
+which defaults to a RAM-backed `/tmp`; fill it (a few concurrent runs, or leaked
+temp from a killed run) and writes fail with `EDQUOT`, git aborts, and the shell
+dies. `diskguard` redirects heavy temp to disk and sweeps stale temp — running it
+is the difference between a clean round and a capsized one. See [[workspace-isolation]].
+
 1. **Propose the round — pick a type and a target.** First decide the **type**
    (see Round types): apply the explore cadence (≥ 4 non-explore rounds since the
    last `explore` → this is an `explore` round); else choose exploit / refactor /
