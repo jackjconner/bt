@@ -12,6 +12,7 @@ from .adjust import (
     _build_adj_log,
     adjust_prices,
 )
+from .quality import QUALITY_FLAG_COLUMNS, annotate_quality_flags
 
 
 def _prices(close_vals: list[float], asset_id: int = 0) -> pl.DataFrame:
@@ -354,3 +355,102 @@ def test_vectorized_log_schema_matches_builder():
     assert log.schema["id"] == empty.schema["id"]
     assert log.schema["action_type"] == empty.schema["action_type"]
     assert log.schema["factor"] == empty.schema["factor"]
+
+
+# ------------------------------------------------------------------ #
+# include_quality_flags — additive, flag-off byte-identical
+# ------------------------------------------------------------------ #
+
+
+def test_flag_off_is_byte_identical_to_default():
+    """With the flag off (and at its default) the returned frame is unchanged."""
+    p0 = _prices([10.0, 10.0, 5.0], asset_id=0)
+    p1 = _prices([20.0, 21.0, 22.0], asset_id=1)
+    prices = pl.concat([p0, p1])
+    ca = _ca_full(
+        [{"ex_date": date(2020, 1, 4), "id": 0, "action_type": "split", "split_ratio": 2.0}]
+    )
+    default = adjust_prices(prices, ca)
+    explicit_off = adjust_prices(prices, ca, include_quality_flags=False)
+    assert default.prices.equals(explicit_off.prices)
+    assert default.prices.columns == explicit_off.prices.columns
+    assert default.adj_log.equals(explicit_off.adj_log)
+
+
+def test_flag_on_appends_columns_without_disturbing_existing():
+    """Flag on: original columns + adj_close are untouched; flags appended after."""
+    p0 = _prices([10.0, 10.0, 5.0], asset_id=0)
+    p1 = _prices([20.0, 21.0, 22.0], asset_id=1)
+    prices = pl.concat([p0, p1])
+    ca = _ca_full(
+        [{"ex_date": date(2020, 1, 4), "id": 0, "action_type": "split", "split_ratio": 2.0}]
+    )
+    off = adjust_prices(prices, ca).prices
+    on = adjust_prices(prices, ca, include_quality_flags=True).prices
+
+    # Same row count.
+    assert on.height == off.height
+    # Original columns are a prefix of the flagged frame, value-identical.
+    assert on.columns[: len(off.columns)] == off.columns
+    assert on.select(off.columns).equals(off)
+    # Flags appended in documented order.
+    assert on.columns[len(off.columns) :] == list(QUALITY_FLAG_COLUMNS)
+
+
+def test_flag_on_each_flag_fires_on_its_synthetic_condition():
+    """A panel engineered to trip every flag: each fires on the right rows."""
+    base = date(2020, 1, 2)
+    dates = [base + timedelta(days=i) for i in range(3)]
+    n_ids = 20  # enough assets for the cross-sectional z of the spike to clear 4.0
+    rows = []
+    for d in dates:
+        for i in range(n_ids):
+            rows.append({"date": d, "id": i, "close": float(i + 1) + 0.01 * d.day})
+    df = pl.DataFrame(rows, schema={"date": pl.Date, "id": pl.Int64, "close": pl.Float64})
+
+    # id 5: frozen flat series → is_frozen_series + price_stale on its 2nd/3rd rows.
+    df = df.with_columns(
+        pl.when(pl.col("id") == 5).then(pl.lit(42.0)).otherwise(pl.col("close")).alias("close")
+    )
+    # id 0 on day 0: huge spike → outlier_flagged.
+    df = df.with_columns(
+        pl.when((pl.col("id") == 0) & (pl.col("date") == dates[0]))
+        .then(pl.lit(9999.0))
+        .otherwise(pl.col("close"))
+        .alias("close")
+    )
+    # Drop id 1 on day 1 → sparse_coverage for id 1.
+    df = df.filter(~((pl.col("id") == 1) & (pl.col("date") == dates[1])))
+    # Duplicate one (date, id) key → is_duplicate_key.
+    dup_row = df.filter((pl.col("id") == 2) & (pl.col("date") == dates[0]))
+    df = pl.concat([df, dup_row])
+
+    # adjust_prices threads include_quality_flags through (default thresholds):
+    # row count preserved and the flag columns are appended.
+    threaded = adjust_prices(df, _no_actions(), include_quality_flags=True).prices
+    assert threaded.height == df.height
+    assert threaded.columns[-len(QUALITY_FLAG_COLUMNS) :] == list(QUALITY_FLAG_COLUMNS)
+
+    # Each flag's firing is asserted via the underlying annotate_quality_flags
+    # with the tuned spike threshold + expected grid the default path omits.
+    out = annotate_quality_flags(
+        adjust_prices(df, _no_actions()).prices,
+        "close",
+        expected_dates=dates,
+        expected_ids=list(range(n_ids)),
+        spike_z_threshold=4.0,
+    )
+
+    assert out.filter(pl.col("is_frozen_series"))["id"].unique().to_list() == [5]
+    # id 5 is flat → its repeat rows are stale (the duplicated id-2 row also
+    # equals its prior obs, so it legitimately stale-matches too).
+    assert 5 in out.filter(pl.col("price_stale"))["id"].unique().to_list()
+    assert out.filter(pl.col("id") == 5).filter(pl.col("price_stale")).height >= 1
+    assert (
+        out.filter(pl.col("outlier_flagged"))
+        .filter((pl.col("id") == 0) & (pl.col("date") == dates[0]))
+        .height
+        >= 1
+    )
+    assert out.filter(pl.col("sparse_coverage"))["id"].unique().to_list() == [1]
+    assert out.filter(pl.col("is_duplicate_key"))["id"].unique().to_list() == [2]
