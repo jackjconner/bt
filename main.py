@@ -16,6 +16,8 @@ from portfolio import (
     random_loadings,
     rolling_vol,
 )
+from etl.datasets import GenSpec
+from pipeline import print_pipeline_summary, run_production_pipeline
 from profiling import ScalingResult, collect_stage, print_report
 from signals import ICEvaluator
 
@@ -106,12 +108,21 @@ def run_experiment(params: dict[str, int], workdir: Path) -> ScalingResult:
     return ScalingResult(params=params, stages=profiles)
 
 
+PIPELINE_SPEC = GenSpec(n_assets=100, n_dates=252, n_features=20, n_factors=5, seed=0)
+
+
 def main() -> None:
     workdir = Path(tempfile.mkdtemp(prefix="bt_scaling_"))
     try:
         for params in PARAM_GRID:
             result = run_experiment(params, workdir)
             print_report(result)
+
+        pipe_dir = Path(tempfile.mkdtemp(prefix="bt_pipeline_"))
+        try:
+            print_pipeline_summary(run_production_pipeline(PIPELINE_SPEC, pipe_dir))
+        finally:
+            shutil.rmtree(pipe_dir, ignore_errors=True)
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
 

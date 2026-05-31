@@ -948,26 +948,31 @@ STAGE_MEASUREMENTS = Schema(
 
 def gen_stage_measurements(spec: GenSpec, n_runs: int = 5, n_trials: int = 5) -> pl.DataFrame:
     rng = _rng(spec, 23)
+    # a real scaling grid: param points sweep n_assets (×1,2,4,8) so a log-log
+    # fit over the grid has ≥3 points to fit and elapsed grows ~linearly.
+    scales = [1, 2, 4, 8]
     rows = []
     for r in range(n_runs):
-        for pp in range(2):
+        for pp, mult in enumerate(scales):
+            n_assets = spec.n_assets * mult
             for stage in STAGES:
+                stage_cost = 0.01 + 0.4 * (STAGES.index(stage) / len(STAGES))
                 for trial in range(n_trials):
-                    base = rng.uniform(0.01, 0.5) * (pp + 1)
+                    elapsed = stage_cost * n_assets / spec.n_assets
                     rows.append(
                         {
                             "run_id": f"run_{r:04d}",
                             "param_point_id": pp,
-                            "n_assets": spec.n_assets,
+                            "n_assets": n_assets,
                             "n_dates": spec.n_dates,
                             "n_features": spec.n_features,
                             "n_factors": spec.n_factors,
                             "stage": stage,
                             "trial_idx": trial,
-                            "elapsed_s": base * (1.0 + rng.normal(0.0, 0.05)),
-                            "result_mb": rng.uniform(1.0, 100.0),
+                            "elapsed_s": elapsed * (1.0 + rng.normal(0.0, 0.03)),
+                            "result_mb": 1.0 + n_assets * 0.05,
                             "rss_delta_mb": rng.uniform(0.0, 50.0),
-                            "peak_rss_mb": rng.uniform(100.0, 2000.0),
+                            "peak_rss_mb": 100.0 + n_assets * 2.0,
                             "peak_traced_mb": rng.uniform(1.0, 200.0),
                         }
                     )
