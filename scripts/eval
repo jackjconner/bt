@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Capture and diff the canonical PipelineSummary golden.
+#
+# Without args (read-only): run the canonical pipeline, compare current output
+# against the saved golden at .oversight/golden.json, print a structured diff,
+# and exit non-zero if any field falls outside tolerance.
+#
+# With --save: write the current summary to .oversight/golden.json.
+#
+# See evalgate/ for the pure diff/serialize/tolerance logic and unit tests.
+#
+# usage: scripts/eval [--save] [--tolerance REL] [--golden PATH]
+set -euo pipefail
+
+exec uv run python -m evalgate "$@"

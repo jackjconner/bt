@@ -35,6 +35,7 @@ from dataclasses import dataclass, field
 from typing import Any, cast
 
 import numpy as np
+import polars as pl
 from sklearn.preprocessing import StandardScaler
 
 from .panel import PanelArrays
@@ -218,6 +219,12 @@ class WFResult:
         (n_test_total,) date objects aligned with ``all_preds``.
     all_ids:
         (n_test_total,) asset IDs aligned with ``all_preds``.
+    predictions_panel:
+        Long-format ``pl.DataFrame`` with columns ``(date, id, prediction, fold)``
+        covering every OOS observation, keyed for downstream joins.  Folds are
+        non-overlapping by construction (each date appears in at most one fold).
+        ``None`` when no folds completed.  This field is additive — existing call
+        sites that do not use it are unaffected.
     """
 
     fold_results: list[FoldResult]
@@ -230,6 +237,9 @@ class WFResult:
     all_groups: np.ndarray
     all_dates: np.ndarray
     all_ids: np.ndarray
+    # NEW (additive): per-fold OOS predictions keyed by (date, id, prediction, fold).
+    # None when no folds completed. Old call-sites are unaffected (default=None).
+    predictions_panel: pl.DataFrame | None = None
 
 
 # --------------------------------------------------------------------------- #
@@ -277,6 +287,9 @@ def walk_forward_cv(
     all_groups_list: list[np.ndarray] = []
     all_dates_list: list[np.ndarray] = []
     all_ids_list: list[np.ndarray] = []
+    # Accumulate per-fold DataFrames for predictions_panel.
+    panel_rows: list[pl.DataFrame] = []
+    fold_idx = 0
 
     for train_idx, test_idx in splitter.split(X, y, groups=groups):
         if len(train_idx) == 0 or len(test_idx) == 0:
@@ -333,8 +346,28 @@ def walk_forward_cv(
         all_preds_list.append(preds)
         all_true_list.append(y_te)
         all_groups_list.append(grp_te)
-        all_dates_list.append(dates[test_idx])
-        all_ids_list.append(ids[test_idx])
+        fold_dates = dates[test_idx]
+        fold_ids = ids[test_idx]
+        all_dates_list.append(fold_dates)
+        all_ids_list.append(fold_ids)
+
+        # Build a keyed DataFrame for this fold's OOS predictions.
+        panel_rows.append(
+            pl.DataFrame(
+                {
+                    "date": list(fold_dates),
+                    "id": fold_ids.tolist(),
+                    "prediction": preds.tolist(),
+                    "fold": fold_idx,
+                }
+            ).with_columns(
+                pl.col("date").cast(pl.Date),
+                pl.col("id").cast(pl.Int64),
+                pl.col("prediction").cast(pl.Float64),
+                pl.col("fold").cast(pl.Int32),
+            )
+        )
+        fold_idx += 1
 
     all_preds = np.concatenate(all_preds_list) if all_preds_list else np.array([])
     all_true = np.concatenate(all_true_list) if all_true_list else np.array([])
@@ -343,6 +376,10 @@ def walk_forward_cv(
     )
     all_dates = np.concatenate(all_dates_list) if all_dates_list else np.array([], dtype=object)
     all_ids = np.concatenate(all_ids_list) if all_ids_list else np.array([], dtype=np.int64)
+
+    predictions_panel: pl.DataFrame | None = (
+        pl.concat(panel_rows).sort(["date", "id"]) if panel_rows else None
+    )
 
     r2_arr = np.array([f.test_r2 for f in fold_results])
     all_ic_values = (
@@ -361,4 +398,5 @@ def walk_forward_cv(
         all_groups=all_groups,
         all_dates=all_dates,
         all_ids=all_ids,
+        predictions_panel=predictions_panel,
     )

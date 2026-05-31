@@ -222,3 +222,86 @@ def test_walk_forward_provenance_arrays():
     assert len(result.all_dates) == n
     assert len(result.all_ids) == n
     assert len(result.all_groups) == n
+
+
+# --------------------------------------------------------------------------- #
+# predictions_panel (new additive field)
+# --------------------------------------------------------------------------- #
+
+
+def test_predictions_panel_is_populated():
+    """predictions_panel must be a non-None DataFrame with expected columns."""
+    feat_df, tgt_df = _synthetic_panel()
+    panel = build_panel(feat_df, tgt_df, "fwd_ret_1")
+    splitter = WalkForwardSplitter(n_splits=3, min_train_periods=10)
+
+    def factory(alpha):
+        return RidgeModel(ModelConfig(n_features=5, alpha=alpha))
+
+    cfg = WalkForwardConfig(alpha_grid=[0.1], scale_features=False, use_sample_weights=False)
+    result = walk_forward_cv(panel, splitter, factory, cfg)
+
+    assert result.predictions_panel is not None
+    assert set(result.predictions_panel.columns) == {"date", "id", "prediction", "fold"}
+
+
+def test_predictions_panel_keyed_by_date_id():
+    """predictions_panel rows must align with all_dates / all_ids (same count)."""
+    feat_df, tgt_df = _synthetic_panel()
+    panel = build_panel(feat_df, tgt_df, "fwd_ret_1")
+    splitter = WalkForwardSplitter(n_splits=3, min_train_periods=10)
+
+    def factory(alpha):
+        return RidgeModel(ModelConfig(n_features=5, alpha=alpha))
+
+    cfg = WalkForwardConfig(alpha_grid=[0.1], scale_features=False, use_sample_weights=False)
+    result = walk_forward_cv(panel, splitter, factory, cfg)
+
+    assert result.predictions_panel is not None
+    n = len(result.all_preds)
+    assert len(result.predictions_panel) == n
+
+
+def test_predictions_panel_non_overlapping_folds():
+    """Each (date, id) pair must appear in at most one fold."""
+    feat_df, tgt_df = _synthetic_panel(n_dates=80, n_assets=10)
+    panel = build_panel(feat_df, tgt_df, "fwd_ret_1")
+    splitter = WalkForwardSplitter(n_splits=4, min_train_periods=10)
+
+    def factory(alpha):
+        return RidgeModel(ModelConfig(n_features=5, alpha=alpha))
+
+    cfg = WalkForwardConfig(alpha_grid=[0.1], scale_features=False, use_sample_weights=False)
+    result = walk_forward_cv(panel, splitter, factory, cfg)
+
+    assert result.predictions_panel is not None
+    pp = result.predictions_panel
+    # Each (date, id) pair must be unique across folds.
+    dupes = pp.group_by(["date", "id"]).agg(pl.len().alias("cnt")).filter(pl.col("cnt") > 1)
+    assert len(dupes) == 0, f"Found overlapping (date, id) pairs: {dupes}"
+
+
+def test_predictions_panel_old_fields_unchanged():
+    """Existing WFResult fields must be unaffected by the new predictions_panel field.
+
+    Proves additivity: old call-sites reading all_preds / all_dates / all_ids
+    still get the same data.
+    """
+    feat_df, tgt_df = _synthetic_panel()
+    panel = build_panel(feat_df, tgt_df, "fwd_ret_1")
+    splitter = WalkForwardSplitter(n_splits=3, min_train_periods=10)
+
+    def factory(alpha):
+        return RidgeModel(ModelConfig(n_features=5, alpha=alpha))
+
+    cfg = WalkForwardConfig(alpha_grid=[0.1], scale_features=False, use_sample_weights=False)
+    result = walk_forward_cv(panel, splitter, factory, cfg)
+
+    # These checks replicate what the pre-existing tests verify.
+    assert len(result.fold_results) == 3
+    assert np.isfinite(result.mean_ic)
+    assert np.isfinite(result.ic_ir)
+    n = len(result.all_preds)
+    assert len(result.all_true) == n
+    assert len(result.all_dates) == n
+    assert len(result.all_ids) == n

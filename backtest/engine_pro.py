@@ -53,7 +53,12 @@ from .accounting import (
 )
 from .constraints import apply_all_constraints
 from .corporate import apply_corporate_actions, build_action_index
-from .costs import compute_borrow_cost, compute_cash_interest, compute_transaction_costs
+from .costs import (
+    compute_borrow_cost,
+    compute_cash_interest,
+    compute_financing_cost,
+    compute_transaction_costs,
+)
 from .engine import BacktestResult, _softmax
 from .signals import SignalFrame
 from .slippage import compute_slippage, fill_price_with_slippage
@@ -115,6 +120,17 @@ class ProductionBacktestConfig:
         Net exposure cap (``|sum(w)|``).  ``1.0`` = no net-short constraint.
     validate_universe:
         Assert that the signal and returns frames share the same asset ids.
+    enable_financing:
+        Deduct per-period financing costs (borrow + leverage funding) from NAV.
+        Default ``False`` — feature is off; output is identical to pre-feature runs.
+    borrow_rate_annual:
+        Annualized rate applied to aggregate short market value when
+        ``enable_financing=True`` (fraction, e.g. ``0.005`` for 50 bps).
+        Neutral default ``0.0`` ensures no cost even if flag is accidentally set.
+    funding_rate_annual:
+        Annualized rate applied to leveraged exposure above 1× gross when
+        ``enable_financing=True`` (fraction, e.g. ``0.02`` for 200 bps).
+        Neutral default ``0.0`` ensures no cost even if flag is accidentally set.
     """
 
     n_assets: int
@@ -131,6 +147,9 @@ class ProductionBacktestConfig:
     enable_borrow_costs: bool = False
     enable_cash_interest: bool = False
     cash_annual_rate: float = 0.05
+    enable_financing: bool = False
+    borrow_rate_annual: float = 0.0
+    funding_rate_annual: float = 0.0
     min_weight: float | None = None
     max_weight: float | None = None
     max_gross_exposure: float | None = None
@@ -254,6 +273,13 @@ class ProductionBacktestEngine:
 
         weights = np.zeros(n_assets)  # current portfolio weights (or positions)
         pending_target: np.ndarray | None = None  # for execution_lag > 0
+
+        cumulative_financing_drag: float = 0.0
+
+        # dt per period: 1/252 for daily data (calendar-day periods between
+        # consecutive dates are counted when available, capped to 5/252 to avoid
+        # blowing up over weekends / holidays).
+        dt_default = 1.0 / 252.0
 
         nav_hist: list[float] = []
         cash_hist: list[float] = []
@@ -419,6 +445,28 @@ class ProductionBacktestEngine:
                 cash += interest
                 nav += interest
 
+            if cfg.enable_financing:
+                # Compute dt: calendar days between consecutive dates, capped
+                # at 5 trading days to avoid inflating costs over long gaps.
+                if t + 1 < n_dates:
+                    dt = min(
+                        (dates[t + 1] - dates[t]).days / 365.0,
+                        5.0 / 252.0,
+                    )
+                else:
+                    dt = dt_default
+                financing = compute_financing_cost(
+                    weights,
+                    nav,
+                    cfg.borrow_rate_annual,
+                    cfg.funding_rate_annual,
+                    dt,
+                )
+                nav -= financing
+                if shares is not None:
+                    cash -= financing
+                cumulative_financing_drag += financing
+
             nav_hist.append(nav)
             cash_hist.append(cash if shares is not None else 0.0)
 
@@ -444,6 +492,7 @@ class ProductionBacktestEngine:
             ),
             fill_log=fill_log,
             cash_history=cash_history,
+            financing_drag=cumulative_financing_drag,
         )
 
 
