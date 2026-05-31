@@ -109,10 +109,21 @@ def run_experiment(params: dict[str, int], workdir: Path) -> ScalingResult:
 
 PIPELINE_SPEC = GenSpec(n_assets=100, n_dates=252, n_features=20, n_factors=5, seed=0)
 
+# Anchored scaling grid: a shared baseline (100 assets, 252 dates ≈ 1yr), an
+# n_assets sweep at fixed dates, and an n_dates sweep at fixed assets spanning
+# 1 / 3 / 5 / 8 / 20 years (252 / 756 / 1260 / 2016 / 5040 trading days).
+# fit_scaling controls for the off-axis dims, so each axis gets a clean slope.
+_FEAT, _FAC, _SEED = 10, 4, 0
 HARNESS_GRID = [
-    GenSpec(n_assets=50, n_dates=126, n_features=10, n_factors=4, seed=0),
-    GenSpec(n_assets=100, n_dates=126, n_features=10, n_factors=4, seed=0),
-    GenSpec(n_assets=200, n_dates=126, n_features=10, n_factors=4, seed=0),
+    # n_assets sweep @ 1yr
+    GenSpec(n_assets=50, n_dates=252, n_features=_FEAT, n_factors=_FAC, seed=_SEED),
+    GenSpec(n_assets=100, n_dates=252, n_features=_FEAT, n_factors=_FAC, seed=_SEED),  # baseline
+    GenSpec(n_assets=200, n_dates=252, n_features=_FEAT, n_factors=_FAC, seed=_SEED),
+    # n_dates sweep @ 100 assets: 3 / 5 / 8 / 20 years
+    GenSpec(n_assets=100, n_dates=756, n_features=_FEAT, n_factors=_FAC, seed=_SEED),
+    GenSpec(n_assets=100, n_dates=1260, n_features=_FEAT, n_factors=_FAC, seed=_SEED),
+    GenSpec(n_assets=100, n_dates=2016, n_features=_FEAT, n_factors=_FAC, seed=_SEED),
+    GenSpec(n_assets=100, n_dates=5040, n_features=_FEAT, n_factors=_FAC, seed=_SEED),
 ]
 
 

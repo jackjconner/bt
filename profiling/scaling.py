@@ -79,7 +79,20 @@ def fit_scaling(
                 if dim not in stage_df.columns:
                     continue
 
-                xy = stage_df.select(dim, metric).drop_nulls()
+                # Control for confounders: fit this dim's slope using only the
+                # points where every OTHER varied dimension sits at its baseline
+                # (modal) value. On a single-axis grid the others are constant, so
+                # this is a no-op; on an anchored multi-axis grid it yields a clean
+                # partial slope per dim instead of a confounded pooled one.
+                controlled = stage_df
+                for other in scaling_dims:
+                    if other == dim or other not in stage_df.columns:
+                        continue
+                    mode = stage_df[other].mode()
+                    if not mode.is_empty():
+                        controlled = controlled.filter(pl.col(other) == mode[0])
+
+                xy = controlled.select(dim, metric).drop_nulls()
                 if xy.is_empty():
                     continue
 
