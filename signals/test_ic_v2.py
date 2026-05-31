@@ -126,3 +126,65 @@ def test_ic_series_v2_injected_signal_positive_ic():
     assert len(arr) > 0
     # With seed=42 and injected IC ~0.08, mean IC should be positive
     assert float(np.nanmean(arr)) > 0
+
+
+# ---------------------------------------------------------------------------
+# _spearman_ic_rows fast path 3 — row-homogeneous NaN (tail forward returns)
+# ---------------------------------------------------------------------------
+
+
+def test_spearman_ic_rows_row_homogeneous_matches_loop():
+    """Fast path 3 (row-homogeneous NaN) produces bit-identical IC to the fallback.
+
+    Constructs S with no NaN and R with NaN in the last N rows (mimicking
+    forward returns that are missing for the most-recent dates), then checks
+    that the optimized code path returns the same IC values as the per-date
+    loop reference.
+    """
+    from signals.ic import _spearman_ic_rows
+
+    rng = np.random.default_rng(99)
+    n_dates, n_assets = 200, 40
+    S = rng.standard_normal((n_dates, n_assets))
+
+    # R with NaN only in last 5 rows (all assets NaN simultaneously).
+    R_full = rng.standard_normal((n_dates, n_assets))
+    R_tail_nan = R_full.copy()
+    R_tail_nan[-5:] = np.nan
+
+    ic_full, n_full = _spearman_ic_rows(S, R_full, min_obs=2)
+    ic_tail, n_tail = _spearman_ic_rows(S, R_tail_nan, min_obs=2)
+
+    # Non-tail dates: IC should be identical to the full (no-NaN) case.
+    np.testing.assert_array_equal(ic_full[:-5], ic_tail[:-5])
+    np.testing.assert_array_equal(n_full[:-5], n_tail[:-5])
+    # Tail dates: NaN (all assets missing).
+    assert np.all(np.isnan(ic_tail[-5:]))
+    assert np.all(n_tail[-5:] == 0)
+
+
+def test_spearman_ic_rows_row_homogeneous_vs_per_date_loop():
+    """Fast path 3 values are numerically identical to a plain per-date loop."""
+    from scipy import stats
+
+    from signals.ic import _spearman_ic_rows
+
+    rng = np.random.default_rng(42)
+    n_dates, n_assets = 100, 20
+    S = rng.standard_normal((n_dates, n_assets))
+    R = rng.standard_normal((n_dates, n_assets))
+    R[-3:] = np.nan  # trigger fast path 3
+
+    ic_fast, _ = _spearman_ic_rows(S, R, min_obs=2)
+
+    # Reference: per-date loop
+    ic_ref = np.full(n_dates, np.nan)
+    for t in range(n_dates - 3):
+        rx = stats.rankdata(S[t])
+        ry = stats.rankdata(R[t])
+        rx_c = rx - rx.mean()
+        ry_c = ry - ry.mean()
+        denom = float(np.sqrt((rx_c**2).sum() * (ry_c**2).sum()))
+        ic_ref[t] = float((rx_c * ry_c).sum() / denom) if denom > 0 else np.nan
+
+    np.testing.assert_allclose(ic_fast[:-3], ic_ref[:-3], rtol=1e-10)

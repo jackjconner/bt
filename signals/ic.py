@@ -26,17 +26,21 @@ def _spearman_ic_rows(
     S and R are (n_dates, n_assets) dense matrices (may contain NaN).
     Returns (ic_array, n_valid_array) both of length n_dates.
 
-    Fast path: when all rows share the same finite mask (common in practice),
-    the entire computation is batched with scipy.stats.rankdata(axis=1) plus a
-    vectorized Pearson step — O(n_dates * n_assets) with no Python loop.
-    Fallback: per-date loop using scipy.stats.rankdata on the valid slice when
-    NaN patterns vary across rows.
+    Fast paths (in order):
+    1. No NaN anywhere — fully vectorized with scipy.stats.rankdata(axis=1).
+    2. Uniform NaN column pattern across all rows — extract valid columns once,
+       fully vectorized.
+    3. Row-homogeneous pattern — each row is either entirely valid (all assets
+       finite) or entirely NaN (no valid assets).  Common when forward returns
+       are missing only at the tail (last N dates).  Extract the valid-row
+       sub-matrix and batch-rank it, skipping the all-NaN rows.
+    Fallback: per-date loop for irregular NaN patterns.
 
     Tie-breaking follows scipy.stats.rankdata default ("average"), which is the
     same method scipy.stats.spearmanr uses internally, so results are numerically
     identical to the previous per-date spearmanr calls.
     """
-    n_dates, _ = S.shape
+    n_dates, n_assets = S.shape
     mask = np.isfinite(S) & np.isfinite(R)
     n_valid = mask.sum(axis=1)
 
@@ -49,7 +53,7 @@ def _spearman_ic_rows(
             return np.where(denom > 0, numer / denom, np.nan)
 
     if mask.all():
-        # Fast path: no NaN anywhere — fully vectorized.
+        # Fast path 1: no NaN anywhere — fully vectorized.
         Rx = stats.rankdata(S, axis=1)
         Ry = stats.rankdata(R, axis=1)
         ics = _vectorized_pearson_on_ranks(Rx, Ry)
@@ -58,7 +62,7 @@ def _spearman_ic_rows(
 
     first_row = mask[0]
     if (mask == first_row).all():
-        # Fast path: uniform NaN pattern across all rows — extract valid columns
+        # Fast path 2: uniform NaN pattern across all rows — extract valid columns
         # and batch-rank only those, then vectorized Pearson.
         Sv = S[:, first_row]
         Rv = R[:, first_row]
@@ -69,6 +73,25 @@ def _spearman_ic_rows(
         Ry = stats.rankdata(Rv, axis=1)
         ics = _vectorized_pearson_on_ranks(Rx, Ry)
         ics = np.where(n_valid >= min_obs, ics, np.nan)
+        return ics, n_valid.astype(int)
+
+    # Fast path 3: row-homogeneous pattern — each row is either entirely valid
+    # or entirely NaN (zero valid assets).  Typical when forward returns carry
+    # NaN only in the last N dates (one NaN per asset × N tail dates).
+    # Extract the fully-valid rows, batch-rank them, and scatter back.
+    row_all_valid = n_valid == n_assets
+    row_all_nan = n_valid == 0
+    if (row_all_valid | row_all_nan).all():
+        valid_rows = np.where(row_all_valid)[0]
+        ics = np.full(n_dates, np.nan)
+        if len(valid_rows) > 0:
+            Sv = S[valid_rows]
+            Rv = R[valid_rows]
+            Rx = stats.rankdata(Sv, axis=1)
+            Ry = stats.rankdata(Rv, axis=1)
+            sub_ics = _vectorized_pearson_on_ranks(Rx, Ry)
+            sub_n = n_valid[valid_rows]
+            ics[valid_rows] = np.where(sub_n >= min_obs, sub_ics, np.nan)
         return ics, n_valid.astype(int)
 
     # Fallback: per-date loop for irregular NaN patterns.
