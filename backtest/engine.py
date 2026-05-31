@@ -58,6 +58,9 @@ class BacktestResult:
             {"date": pl.Series([], dtype=pl.Date), "cash": pl.Series([], dtype=pl.Float64)}
         )
     )
+    # Cumulative financing drag deducted from NAV over the backtest.
+    # Zero when ``enable_financing=False`` (the default).
+    financing_drag: float = 0.0
 
 
 @dataclass(frozen=True)
