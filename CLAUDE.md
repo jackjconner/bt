@@ -40,14 +40,16 @@ prune_profiles(pdir, keep_last_n=5)   # keeps latest N runs + any flagged on_reg
 
 **Wired-in capture (opt-in, off by default):**
 
-- `run_harness(..., profiles_dir=<dir>)` — captures every component at every grid
-  point in a *separate* pass (never wraps the timed loop), indexes them, prunes
-  to the latest N runs (regressions retained). A unique per-run id is derived
+- `run_harness(..., profiles_dir=<dir>, profiles_points=[...])` — captures each
+  component in a *separate* pass (never wraps the timed loop), indexes them,
+  prunes to the latest N runs (regressions retained). `profiles_points` bounds
+  cost to selected grid indices (default: all). A unique per-run id is derived
   from the timestamp so retention works despite the fixed `run_id`.
 - `BT_FLAMEGRAPHS=1 uv run main.py` — flips on both the harness pass and a
-  whole-pipeline `full_pipeline` capture into `.oversight/profiles/`. The
-  whole-pipeline flame graph already contains each component's subtree, so one
-  capture decomposes the full run. Off by default → the plain run pays no cost.
+  whole-pipeline `full_pipeline` capture into `.oversight/profiles/`. The harness
+  profiles only the grid extremes (largest n_assets, largest n_dates), not all 11
+  points; the whole-pipeline flame graph already contains each component's
+  subtree. Off by default → the plain run pays no cost.
 
 ## Rules
 

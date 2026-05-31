@@ -140,6 +140,16 @@ HARNESS_GRID = [
     GenSpec(n_assets=100, n_dates=5040, n_features=_FEAT, n_factors=_FAC, seed=_SEED),
 ]
 
+# When flame-graph capture is on, profile only the extreme point of each sweep
+# axis (largest n_assets, largest n_dates) — where bottlenecks dominate — instead
+# of all 11 grid points. Derived from the grid so it tracks edits to it.
+HARNESS_PROFILE_POINTS = sorted(
+    {
+        max(range(len(HARNESS_GRID)), key=lambda i: HARNESS_GRID[i].n_assets),
+        max(range(len(HARNESS_GRID)), key=lambda i: HARNESS_GRID[i].n_dates),
+    }
+)
+
 
 def _profile_full_pipeline(pipe_dir: Path, profiles_dir: Path) -> None:
     """Capture the whole production pipeline as one flame graph (CPU + memory).
@@ -206,6 +216,7 @@ def main() -> None:
                     history_dir=history_dir,
                     agent_ctx=agent_ctx,
                     profiles_dir=profiles_dir,
+                    profiles_points=HARNESS_PROFILE_POINTS,
                 )
             )
         finally:
