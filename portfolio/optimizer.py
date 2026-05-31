@@ -144,6 +144,23 @@ def mean_variance(
 # ---------------------------------------------------------------------------
 
 
+def _slsqp_warm_start(spec: ConstraintSpec, w0: np.ndarray) -> np.ndarray:
+    """Compute a warm-start weight vector for SLSQP.
+
+    Clips w0 to per-asset bounds, then renormalises to satisfy the
+    net_exposure equality constraint.
+    """
+    n = spec.n_assets
+    bounds = spec.per_asset_bounds()
+    w_init = np.clip(w0, [b[0] for b in bounds], [b[1] for b in bounds])
+    s = w_init.sum()
+    if abs(s) > 1e-12:
+        w_init = w_init * spec.net_exposure / s
+    else:
+        w_init = _equal_weight(n) * spec.net_exposure
+    return w_init
+
+
 def _solve_slsqp(
     alpha: np.ndarray,
     cov: np.ndarray,
@@ -155,8 +172,6 @@ def _solve_slsqp(
     no_trade_band: float,
     max_iter: int,
 ) -> OptimizeResult:
-    n = spec.n_assets
-
     # Precompute 2Σ for the gradient of the variance term
     two_cov = 2.0 * cov
 
@@ -192,15 +207,7 @@ def _solve_slsqp(
 
     bounds = spec.per_asset_bounds()
     constraints = spec.scipy_constraints()
-
-    # Warm start: project equal-weight toward per-asset bounds
-    w_init = np.clip(w0, [b[0] for b in bounds], [b[1] for b in bounds])
-    # Renormalize to satisfy net_exposure equality
-    s = w_init.sum()
-    if abs(s) > 1e-12:
-        w_init = w_init * spec.net_exposure / s
-    else:
-        w_init = _equal_weight(n) * spec.net_exposure
+    w_init = _slsqp_warm_start(spec, w0)
 
     res = minimize(
         objective,
@@ -224,6 +231,231 @@ def _solve_slsqp(
 # ---------------------------------------------------------------------------
 # OSQP backend — QP reformulation with epigraph L1 linearisation
 # ---------------------------------------------------------------------------
+
+_INF = 1e30
+
+
+def _build_quadratic_cost(
+    n: int,
+    risk_aversion: float,
+    cov_arr: np.ndarray,
+    alpha: np.ndarray,
+    cp: np.ndarray,
+    cost_scale: float,
+) -> tuple[sp.csc_matrix, np.ndarray]:
+    """Build the OSQP quadratic-cost matrix P and linear-cost vector q.
+
+    Decision variable x = [w (n), t (n)], length N = 2n.
+
+    P (upper-triangular CSC):
+        P[0:n, 0:n] = 2 * risk_aversion * Σ
+        (factor of 2 because OSQP objective is 0.5 xᵀ P x + qᵀ x)
+
+    q:
+        q[0:n] = -alpha   (minimise −αᵀw)
+        q[n:2n] = cost_scale * cp   (minimise κ·Σ c_i t_i)
+    """
+    N = 2 * n
+    P_dense = np.zeros((N, N))
+    P_dense[:n, :n] = 2.0 * risk_aversion * cov_arr
+    P = sp.triu(P_dense, format="csc")
+
+    q = np.zeros(N)
+    q[:n] = -np.asarray(alpha, dtype=float)
+    if cost_scale > 0.0:
+        q[n:] = cost_scale * cp
+
+    return P, q
+
+
+def _build_epigraph_rows(
+    n: int,
+    w0_arr: np.ndarray,
+    no_trade_band: float,
+) -> tuple[list[sp.spmatrix], list[np.ndarray], list[np.ndarray]]:
+    """Build the three epigraph-related constraint blocks for the t variables.
+
+    Returns three (A_block, l_part, u_part) triplets (as parallel lists)
+    corresponding to:
+      - t_i ≥ 0
+      - w_i - t_i ≤ w0_i + band   (upper epigraph side)
+      - -w_i - t_i ≤ -w0_i + band  (lower epigraph side)
+    """
+    band = float(no_trade_band)
+    A_blocks: list[sp.spmatrix] = []
+    l_parts: list[np.ndarray] = []
+    u_parts: list[np.ndarray] = []
+
+    # t_i ≥ 0  (n rows)
+    A_blocks.append(sp.hstack([sp.csr_matrix((n, n)), sp.eye(n, format="csr")]))
+    l_parts.append(np.zeros(n))
+    u_parts.append(np.full(n, _INF))
+
+    # Epigraph upper side: w_i - t_i ≤ w0_i + band
+    A_blocks.append(sp.hstack([sp.eye(n, format="csr"), -sp.eye(n, format="csr")]))
+    l_parts.append(np.full(n, -_INF))
+    u_parts.append(w0_arr + band)
+
+    # Epigraph lower side: -w_i - t_i ≤ -w0_i + band
+    A_blocks.append(sp.hstack([-sp.eye(n, format="csr"), -sp.eye(n, format="csr")]))
+    l_parts.append(np.full(n, -_INF))
+    u_parts.append(-w0_arr + band)
+
+    return A_blocks, l_parts, u_parts
+
+
+def _build_sector_rows(
+    spec: ConstraintSpec,
+    n: int,
+) -> tuple[list[sp.spmatrix], list[np.ndarray], list[np.ndarray]]:
+    """Build one constraint row per active sector bound.
+
+    Sector constraints are linear in w only; t columns are zero.
+    """
+    A_blocks: list[sp.spmatrix] = []
+    l_parts: list[np.ndarray] = []
+    u_parts: list[np.ndarray] = []
+
+    if spec.sector_map is None:
+        return A_blocks, l_parts, u_parts
+
+    sectors = np.asarray(spec.sector_map)
+    for s in np.unique(sectors):
+        mask = (sectors == s).astype(float)
+        s_int = int(s)
+        if s_int in spec.sector_min or s_int in spec.sector_max:
+            row_w = sp.csr_matrix(mask.reshape(1, n))
+            row_t = sp.csr_matrix((1, n))
+            row = sp.hstack([row_w, row_t])
+            lo_s = float(spec.sector_min.get(s_int, -_INF))
+            hi_s = float(spec.sector_max.get(s_int, _INF))
+            A_blocks.append(row)
+            l_parts.append(np.array([lo_s]))
+            u_parts.append(np.array([hi_s]))
+
+    return A_blocks, l_parts, u_parts
+
+
+def _build_gross_rows(
+    spec: ConstraintSpec,
+    n: int,
+) -> tuple[list[sp.spmatrix], list[np.ndarray], list[np.ndarray]]:
+    """Build constraint rows for gross exposure bounds (long-only simplification).
+
+    For long-only portfolios Σ|w_i| = Σ w_i, so gross bounds reduce to linear
+    constraints on w. Long-short gross bounds require a separate epigraph; that
+    path is not exercised here (production relies on per-asset bounds).
+    """
+    A_blocks: list[sp.spmatrix] = []
+    l_parts: list[np.ndarray] = []
+    u_parts: list[np.ndarray] = []
+
+    row_w = sp.csr_matrix(np.ones((1, n)))
+    row_t = sp.csr_matrix((1, n))
+    row = sp.hstack([row_w, row_t])
+
+    if spec.min_gross is not None:
+        A_blocks.append(row)
+        l_parts.append(np.array([float(spec.min_gross)]))
+        u_parts.append(np.array([_INF]))
+
+    if spec.max_gross is not None:
+        A_blocks.append(row)
+        l_parts.append(np.array([-_INF]))
+        u_parts.append(np.array([float(spec.max_gross)]))
+
+    return A_blocks, l_parts, u_parts
+
+
+def _build_constraint_matrix(
+    spec: ConstraintSpec,
+    n: int,
+    cost_scale: float,
+    w0_arr: np.ndarray,
+    no_trade_band: float,
+) -> tuple[sp.csc_matrix, np.ndarray, np.ndarray]:
+    """Assemble the full OSQP constraint matrix A and bound vectors l, u.
+
+    Row layout (for cost_scale > 0):
+        0..n-1     : per-asset weight bounds   [I | 0]
+        n          : net-exposure equality      [1ᵀ | 0]
+        n+1..2n    : t_i ≥ 0                   [0 | I]
+        2n+1..3n   : epigraph upper side        [I | -I]
+        3n+1..4n   : epigraph lower side       [-I | -I]
+        [sector rows, one per active bound]
+        [gross rows, 0–2]
+
+    When cost_scale == 0 the t-variable and epigraph rows are omitted.
+    """
+    A_blocks: list[sp.spmatrix] = []
+    l_parts: list[np.ndarray] = []
+    u_parts: list[np.ndarray] = []
+
+    # 1. Per-asset weight bounds: w_i ∈ [lb_i, ub_i]  (n rows)
+    bounds_list = spec.per_asset_bounds()
+    lb = np.array([b[0] for b in bounds_list])
+    ub = np.array([b[1] for b in bounds_list])
+    A_blocks.append(sp.hstack([sp.eye(n, format="csr"), sp.csr_matrix((n, n))]))
+    l_parts.append(lb)
+    u_parts.append(ub)
+
+    # 2. Net-exposure equality: Σ w_i = net_exposure  (1 row)
+    ones_w = sp.csr_matrix(np.ones((1, n)))
+    zeros_t = sp.csr_matrix((1, n))
+    A_blocks.append(sp.hstack([ones_w, zeros_t]))
+    ne = float(spec.net_exposure)
+    l_parts.append(np.array([ne]))
+    u_parts.append(np.array([ne]))
+
+    # 3–5. Epigraph blocks (only when cost penalty is active)
+    if cost_scale > 0.0:
+        epi_blocks, epi_l, epi_u = _build_epigraph_rows(n, w0_arr, no_trade_band)
+        A_blocks.extend(epi_blocks)
+        l_parts.extend(epi_l)
+        u_parts.extend(epi_u)
+
+    # 6. Sector constraints
+    sec_blocks, sec_l, sec_u = _build_sector_rows(spec, n)
+    A_blocks.extend(sec_blocks)
+    l_parts.extend(sec_l)
+    u_parts.extend(sec_u)
+
+    # 7. Gross exposure
+    gross_blocks, gross_l, gross_u = _build_gross_rows(spec, n)
+    A_blocks.extend(gross_blocks)
+    l_parts.extend(gross_l)
+    u_parts.extend(gross_u)
+
+    A = sp.vstack(A_blocks).tocsc()
+    l_vec = np.concatenate(l_parts)
+    u_vec = np.concatenate(u_parts)
+    return A, l_vec, u_vec
+
+
+def _osqp_objective(
+    weights: np.ndarray,
+    alpha: np.ndarray,
+    cov_arr: np.ndarray,
+    risk_aversion: float,
+    w0: np.ndarray,
+    cp: np.ndarray,
+    cost_scale: float,
+    no_trade_band: float,
+) -> float:
+    """Compute the original (non-negated) objective for a given weight vector.
+
+    Returns alpha'w - lambda * w'Σw - cost.
+    """
+    var_val = float(weights @ cov_arr @ weights)
+    alpha_ret = float(np.asarray(alpha) @ weights)
+    if cost_scale > 0.0:
+        delta = np.abs(weights - np.asarray(w0, dtype=float))
+        if no_trade_band > 0.0:
+            delta = np.maximum(delta - no_trade_band, 0.0)
+        cost_val = cost_scale * float(cp @ delta)
+    else:
+        cost_val = 0.0
+    return alpha_ret - risk_aversion * var_val - cost_val
 
 
 def _solve_osqp(
@@ -260,115 +492,12 @@ def _solve_osqp(
     import osqp
 
     n = spec.n_assets
-    N = 2 * n  # total decision vars: [w, t]
-    INF = 1e30
-
-    # ------------------------------------------------------------------
-    # Quadratic cost matrix P (upper-triangular)
-    # ------------------------------------------------------------------
     cov_arr = np.asarray(cov, dtype=float)
-    # 2λΣ on the w block; t block is zero (pure linear penalty)
-    P_dense = np.zeros((N, N))
-    P_dense[:n, :n] = 2.0 * risk_aversion * cov_arr
-    P = sp.triu(P_dense, format="csc")
+    w0_arr = np.asarray(w0, dtype=float)
 
-    # ------------------------------------------------------------------
-    # Linear cost vector q
-    # ------------------------------------------------------------------
-    q = np.zeros(N)
-    q[:n] = -np.asarray(alpha, dtype=float)  # minimise −α'w
-    if cost_scale > 0.0:
-        q[n:] = cost_scale * cp  # minimise κ·Σ c_i t_i
+    P, q = _build_quadratic_cost(n, risk_aversion, cov_arr, alpha, cp, cost_scale)
+    A, l_vec, u_vec = _build_constraint_matrix(spec, n, cost_scale, w0_arr, no_trade_band)
 
-    # ------------------------------------------------------------------
-    # Constraint matrix A and bounds [l, u]
-    # ------------------------------------------------------------------
-    # We accumulate sparse blocks and bound vectors.
-    A_blocks: list[sp.spmatrix] = []
-    l_parts: list[np.ndarray] = []
-    u_parts: list[np.ndarray] = []
-
-    # 1. Per-asset weight bounds: w_i ∈ [lb_i, ub_i]  (n rows)
-    bounds_list = spec.per_asset_bounds()
-    lb = np.array([b[0] for b in bounds_list])
-    ub = np.array([b[1] for b in bounds_list])
-    # Selects only w variables (columns 0..n-1)
-    A_blocks.append(sp.hstack([sp.eye(n, format="csr"), sp.csr_matrix((n, n))]))
-    l_parts.append(lb)
-    u_parts.append(ub)
-
-    # 2. Net-exposure equality: Σ w_i = net_exposure  (1 row)
-    ones_w = sp.csr_matrix(np.ones((1, n)))
-    zeros_t = sp.csr_matrix((1, n))
-    A_blocks.append(sp.hstack([ones_w, zeros_t]))
-    ne = float(spec.net_exposure)
-    l_parts.append(np.array([ne]))
-    u_parts.append(np.array([ne]))
-
-    # 3. t_i ≥ 0  (n rows) — only needed when cost_scale > 0
-    if cost_scale > 0.0:
-        A_blocks.append(sp.hstack([sp.csr_matrix((n, n)), sp.eye(n, format="csr")]))
-        l_parts.append(np.zeros(n))
-        u_parts.append(np.full(n, INF))
-
-        # 4. Epigraph upper side: w_i - t_i ≤ w0_i + band
-        #    i.e. [I | -I] [w; t] ≤ w0 + band
-        band = float(no_trade_band)
-        w0_arr = np.asarray(w0, dtype=float)
-        A_blocks.append(sp.hstack([sp.eye(n, format="csr"), -sp.eye(n, format="csr")]))
-        l_parts.append(np.full(n, -INF))
-        u_parts.append(w0_arr + band)
-
-        # 5. Epigraph lower side: -w_i - t_i ≤ -w0_i + band
-        #    i.e. [-I | -I] [w; t] ≤ -w0 + band
-        A_blocks.append(sp.hstack([-sp.eye(n, format="csr"), -sp.eye(n, format="csr")]))
-        l_parts.append(np.full(n, -INF))
-        u_parts.append(-w0_arr + band)
-
-    # 6. Sector constraints (linear, on w only)
-    if spec.sector_map is not None:
-        sectors = np.asarray(spec.sector_map)
-        unique_sectors = np.unique(sectors)
-        for s in unique_sectors:
-            mask = (sectors == s).astype(float)
-            s_int = int(s)
-            if s_int in spec.sector_min or s_int in spec.sector_max:
-                row_w = sp.csr_matrix(mask.reshape(1, n))
-                row_t = sp.csr_matrix((1, n))
-                row = sp.hstack([row_w, row_t])
-                lo_s = float(spec.sector_min.get(s_int, -INF))
-                hi_s = float(spec.sector_max.get(s_int, INF))
-                A_blocks.append(row)
-                l_parts.append(np.array([lo_s]))
-                u_parts.append(np.array([hi_s]))
-
-    # 7. Gross exposure (long-only simplification: Σ w_i is already net;
-    #    Σ|w_i| = Σ w_i for long-only, so gross bounds reduce to net bounds
-    #    which are already captured.  For long-short, |w_i| requires its own
-    #    epigraph — not added here since the production path uses long_only=False
-    #    but relies on per-asset bounds rather than an explicit gross cap.)
-    if spec.min_gross is not None:
-        # Σ w_i ≥ min_gross  (long-only: |w| = w)
-        row_w = sp.csr_matrix(np.ones((1, n)))
-        row_t = sp.csr_matrix((1, n))
-        A_blocks.append(sp.hstack([row_w, row_t]))
-        l_parts.append(np.array([float(spec.min_gross)]))
-        u_parts.append(np.array([INF]))
-
-    if spec.max_gross is not None:
-        row_w = sp.csr_matrix(np.ones((1, n)))
-        row_t = sp.csr_matrix((1, n))
-        A_blocks.append(sp.hstack([row_w, row_t]))
-        l_parts.append(np.array([-INF]))
-        u_parts.append(np.array([float(spec.max_gross)]))
-
-    A = sp.vstack(A_blocks).tocsc()
-    l_vec = np.concatenate(l_parts)
-    u_vec = np.concatenate(u_parts)
-
-    # ------------------------------------------------------------------
-    # Solve
-    # ------------------------------------------------------------------
     prob = osqp.OSQP()
     prob.setup(
         P,
@@ -390,18 +519,9 @@ def _solve_osqp(
     converged = status in ("solved", "solved_inaccurate")
     weights = res.x[:n] if res.x is not None else np.zeros(n)
 
-    # Compute objective value in the original (non-negated) formulation
-    # alpha'w - lambda * w'Σw - cost
-    var_val = float(weights @ cov_arr @ weights)
-    alpha_ret = float(np.asarray(alpha) @ weights)
-    if cost_scale > 0.0:
-        delta = np.abs(weights - np.asarray(w0, dtype=float))
-        if no_trade_band > 0.0:
-            delta = np.maximum(delta - no_trade_band, 0.0)
-        cost_val = cost_scale * float(cp @ delta)
-    else:
-        cost_val = 0.0
-    obj = alpha_ret - risk_aversion * var_val - cost_val
+    obj = _osqp_objective(
+        weights, alpha, cov_arr, risk_aversion, w0_arr, cp, cost_scale, no_trade_band
+    )
 
     return OptimizeResult(
         weights=weights,
