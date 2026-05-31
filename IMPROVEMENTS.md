@@ -104,3 +104,59 @@ metric:   −193 net lines (etl/adjust.py + test_adjust.py); golden byte-identic
 eval:     byte-identical — direct branch-vs-main PipelineSummary diff "Files are identical"; post-merge pytest 1211 passed (−16 oracle/helper tests, +1 direct fixture test)
 PR:       #47
 note:     First consolidate round (the second half of two-phase add-then-consolidate). Round 005 vectorized adjust_prices but kept the per-asset loop as a test oracle under additive-only; with backwards-compat dropped (DECISIONS.md) it was dead code — no production caller. Scout cleared the other 4 round-005 shadows as genuinely live and left them: signals engine="matrix" is the non-rank IC backend, models "loop" is the non-ridge auto-dispatch fallback, backtest's scalar loop handles non-weight_space_eligible configs, analysis's scalar fns are still called by report.py. Equivalence test → direct fixture test (coverage preserved). Report: reports/round-006/etl.md.
+
+## 2026-05-31 — round 007: multi-component feature round (one additive capability per component)  [accepted ×7]
+type:     feature (7 components dispatched in parallel — all 7 merged: signals/profiling/portfolio/models/backtest/etl/analysis)
+metric:   see per-component entries below — every feature is additive + flag-off/API-only, so the production golden is unchanged
+eval:     golden held on the merged tree — re-validated together post-merge: full suite 1284 passed/1 skipped, evalgate 17/17 byte-identical (no PipelineSummary field added on a default run; flags ship off, so no golden re-save)
+PR:       #49 #50 #51 #52 #53 #54 #55
+note:     First feature round. The ideation/dedup step earned its keep: 7 of 9 seeded FEATURE_BACKLOG rows were ALREADY BUILT (analysis turnover/rolling/periodic F-001/2/3 by rounds ≤005, portfolio txn-cost F-004, signals regime-IC F-005 + combination F-009) — the scouts re-ideated genuinely-novel targets instead of re-doing landed work. All 7 PRs strictly in-lane (zero file overlap), additive, default-off or API-only; the committer isolation guard + absolute-path worker pinning held with no cwd slips (contrast round 005). Reports: reports/round-007/{signals,profiling,portfolio,models,backtest,etl,analysis}.md.
+
+## 2026-05-31 — signals: pair-wise signal correlation + diversification ratio  [accepted]
+type:     feature
+metric:   new capability — signal_pair_correlation → SignalCorrelationResult (rank-corr matrix, diversification ratio, mean|corr|); +23 tests
+eval:     golden held — 17 fields byte-identical (ic_raw / ic_neutralized / horizon_ic[*] 0.00e+00)
+PR:       #49
+note:     Screen a book of alphas for redundancy without a backtest. Spearman = Pearson on within-date ranks (Polars rank "average" tie default matches the IC engine). Pure new surface; IC engine untouched. Report: reports/round-007/signals.md.
+
+## 2026-05-31 — profiling: r²-confidence gating for regression detection  [accepted]
+type:     feature
+metric:   new capability — check_regressions(min_r_squared=None) excludes low-r² (noisy) scaling fits from verdicts; +RegressionReport audit fields; +7 tests
+eval:     golden held — profiling is off the number path; 17/0, n_scaling_fits=36 unchanged
+PR:       #50
+note:     Uses the scaling-fit r² the profiler already computed but never consumed. Default None ⇒ verdicts byte-identical to before; the harness hot loop is untouched. A (stage,metric) with no fit is never excluded. Report: reports/round-007/profiling.md.
+
+## 2026-05-31 — portfolio: per-factor risk decomposition / attribution  [accepted]
+type:     feature
+metric:   new capability — FactorRiskModel.factor_risk_breakdown(w) → total/factor/specific variance + per-factor contribs; +9 tests
+eval:     golden held — 17 fields byte-identical; weights/objective/constraints unchanged
+PR:       #51
+note:     Built on the existing factor_component_contrib (asserted equal, no duplication) and routed through the factored Σ = B·F·Bᵀ + D form — never materializes the dense cov, stays off the optimizer hot path. API-only this round (no PipelineSummary field). Report: reports/round-007/portfolio.md.
+
+## 2026-05-31 — models: per-fold IC dispersion + hit-rate diagnostics  [accepted]
+type:     feature
+metric:   new capability — fold_ic_dispersion_enabled flag → FoldResult.fold_ic_std / fold_hit_rate + WFResult.fold_diagnostics; +54 model tests
+eval:     golden held — flag-off wf_mean_ic byte-identical (0.00e+00), wf_mean_r2 at 1.11e-16 FP-noise
+PR:       #52
+note:     Derived from the existing per-date ic_values (no IC recompute). Both CV engines (generic loop + batched ridge) thread the flag through one shared assembler. Flag defaults off ⇒ flag-off hot path is the exact pre-change code. Report: reports/round-007/models.md.
+
+## 2026-05-31 — backtest: short-availability gating + financing costs (flag-off)  [accepted]
+type:     feature
+metric:   new capability — enable_short_availability_gating (default off): forbid non-shortable shorts, cap short MV at loan_availability, charge daily borrow; +6 tests
+eval:     golden BYTE-IDENTICAL with flag off — proven against a fresh clean-main golden at --tolerance 0 (0.00e+00 every field; the committed golden's 1e-16 noise reproduces on clean main)
+PR:       #53
+note:     Consumes the existing etl BORROW_RATES dataset (shortable / loan_availability / borrow_rate_bps) — no cross-lane API request. ValueError if enabled without borrow_rates (boundary assert). Excluded from the vectorized fast path (nav-dependent). Ships dormant; flip on in a later golden-moving round. Report: reports/round-007/backtest.md.
+
+## 2026-05-31 — etl: optional data-quality flag columns (flag-off)  [accepted]
+type:     feature
+metric:   new capability — include_quality_flags (default off) appends is_duplicate_key / is_frozen_series / sparse_coverage / outlier_flagged / price_stale; +15 tests
+eval:     golden held — consumed price panel frame_equal when flag off; residual 1e-16 reproduces on clean main
+PR:       #54
+note:     annotate_quality_flags REUSES the existing quality.check() logic (no reimplementation); QUALITY_FLAG_COLUMNS is the single source of column set+order. Worker correctly dropped the brief's is_halted/is_delisted (check() lacks the universe inputs; synthesizing would violate reuse-don't-reimplement) and removed an early-draft # noqa rather than suppress. Report: reports/round-007/etl.md.
+
+## 2026-05-31 — analysis: drawdown duration & recovery time series  [accepted]
+type:     feature
+metric:   new capability — drawdown_recovery(nav) → per-event peak/trough/recovery dates + drawdown_days / recovery_days / peak_to_recovery_days; +8 tests
+eval:     golden held — all 16 numeric fields byte-identical
+PR:       #55
+note:     Isolates each drawdown event off the same nav/cum_max−1 series analysis already reports; deepest event depth == existing max_drawdown (asserted). Additive, no PipelineSummary field, off the hot path. Tear-sheet material; pairs with portfolio's factor-risk breakdown this round. Report: reports/round-007/analysis.md.

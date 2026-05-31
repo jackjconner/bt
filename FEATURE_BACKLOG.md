@@ -15,15 +15,21 @@ golden fields hold, new `PipelineSummary` fields gated by `evalgate
 
 | id | component | capability | why (vs VISION) | status | priority |
 |---|---|---|---|---|---|
-| F-001 | analysis | turnover (one-/two-way) series from `trade_log` | breadth + observability; data already present, isolated, additive | queued | 30 |
-| F-002 | analysis | rolling metrics (Sharpe / vol / beta / drawdown) | breadth; high-leverage for tear sheets, cleanly additive series | queued | 29 |
-| F-003 | analysis | periodic-return tables (monthly / quarterly / annual) | breadth + observability; additive, low cost | queued | 27 |
-| F-004 | portfolio | transaction-cost-aware rebalancing (turnover penalty / no-trade band) | correctness of net returns; flag-gated objective term | queued | 26 |
-| F-005 | signals | regime / subsample IC stability | breadth of alpha research; additive metric, defends robustness | queued | 24 |
-| F-006 | portfolio | EWMA covariance variant beside Ledoit-Wolf | robustness; additive estimator choice behind a flag | queued | 23 |
-| F-007 | backtest | borrow / short-availability gating + financing costs | correctness for shorts; `borrow_rates` dataset already exists | queued | 22 |
+| F-001 | analysis | turnover (one-/two-way) series from `trade_log` | breadth + observability; data already present, isolated, additive | done (≤r005, pre-dedup) | 30 |
+| F-002 | analysis | rolling metrics (Sharpe / vol / beta / drawdown) | breadth; high-leverage for tear sheets, cleanly additive series | done (≤r005, `rolling.py`) | 29 |
+| F-003 | analysis | periodic-return tables (monthly / quarterly / annual) | breadth + observability; additive, low cost | done (≤r005, `periodic.py`) | 27 |
+| F-004 | portfolio | transaction-cost-aware rebalancing (turnover penalty / no-trade band) | correctness of net returns; flag-gated objective term | done (≤r005, `cost_scale`/`no_trade_band`) | 26 |
+| F-005 | signals | regime / subsample IC stability | breadth of alpha research; additive metric, defends robustness | done (≤r005, `regime_conditional_ic`) | 24 |
+| F-006 | portfolio | EWMA covariance variant beside Ledoit-Wolf | robustness; additive estimator choice behind a flag | queued (factor-cov level still open; `ewma_cov` exists on returns) | 23 |
+| F-007 | backtest | borrow / short-availability gating + financing costs | correctness for shorts; `borrow_rates` dataset already exists | done r007 #53 (flag-off) | 22 |
 | F-008 | backtest | multiple order types (limit, MOC/MOO, VWAP/TWAP/POV) | breadth + realism; higher cost, flag per order type | queued | 20 |
-| F-009 | signals | signal combination / orthogonalization | breadth; marginal-contribution of each alpha, additive | queued | 19 |
+| F-009 | signals | signal combination / orthogonalization | breadth; marginal-contribution of each alpha, additive | done (≤r005, `zscore_blend`/`gram_schmidt`) | 19 |
+| F-010 | signals | pair-wise signal correlation + diversification ratio | breadth; screen alphas for redundancy without a backtest | done r007 #49 | 38 |
+| F-011 | profiling | r²-confidence gating for regression detection | observability; suppress false alarms on noisy scaling fits | done r007 #50 | 35 |
+| F-012 | portfolio | per-factor risk decomposition / attribution | observability; total/factor/specific variance breakdown | done r007 #51 | 37 |
+| F-013 | models | per-fold IC dispersion + hit-rate diagnostics | correctness; fold-level stability auditing | done r007 #52 | 30 |
+| F-014 | etl | optional data-quality flag columns (`include_quality_flags`) | robustness + observability; tradability/confidence gating | done r007 #54 | 37 |
+| F-015 | analysis | drawdown duration & recovery time series | observability; tear-sheet drawdown-event analytics | done r007 #55 | 35 |
 
 ## Notes
 
