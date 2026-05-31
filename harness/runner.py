@@ -84,9 +84,7 @@ def run_harness(
     for pp, spec in enumerate(grid):
         data_dir = store_dir / f"data_pp{pp}"
         write_all(data_dir, spec)
-        ctx = BenchmarkContext(
-            spec=spec, loader=DatasetLoader(data_dir, spec), workdir=data_dir
-        )
+        ctx = BenchmarkContext(spec=spec, loader=DatasetLoader(data_dir, spec), workdir=data_dir)
         params = _params(spec)
 
         for comp in components:

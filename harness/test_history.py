@@ -141,9 +141,7 @@ def test_e2e_p50_s_in_runs_table(tmp_path: Path) -> None:
 
 def test_second_write_prev_delta(tmp_path: Path) -> None:
     # Run 1: etl p50 = 100 ms.  Run 2: etl p50 = 80 ms → -20 %.
-    _write(
-        tmp_path, "run-1", {"etl": 0.1}, run_ts=datetime.datetime(2026, 5, 28, 10, 0, 0)
-    )
+    _write(tmp_path, "run-1", {"etl": 0.1}, run_ts=datetime.datetime(2026, 5, 28, 10, 0, 0))
     _write(
         tmp_path,
         "run-2",
@@ -152,16 +150,12 @@ def test_second_write_prev_delta(tmp_path: Path) -> None:
     )
 
     snaps = read_component_snapshots(tmp_path)
-    run2_etl = snaps.filter(
-        (snaps["run_id"] == "run-2") & (snaps["component"].cast(str) == "etl")
-    )
+    run2_etl = snaps.filter((snaps["run_id"] == "run-2") & (snaps["component"].cast(str) == "etl"))
     assert abs(run2_etl["vs_prev_p50_pct"][0] - (-20.0)) < 1e-6
 
 
 def test_second_write_e2e_vs_prev_in_runs(tmp_path: Path) -> None:
-    _write(
-        tmp_path, "run-1", {"etl": 0.1}, run_ts=datetime.datetime(2026, 5, 28, 10, 0, 0)
-    )
+    _write(tmp_path, "run-1", {"etl": 0.1}, run_ts=datetime.datetime(2026, 5, 28, 10, 0, 0))
     _write(
         tmp_path,
         "run-2",
@@ -177,9 +171,7 @@ def test_second_write_e2e_vs_prev_in_runs(tmp_path: Path) -> None:
 def test_third_write_baseline_is_oldest_run(tmp_path: Path) -> None:
     # Run 1: 100 ms, Run 2: 80 ms, Run 3: 70 ms
     # Run 3 vs_baseline should use Run 1 (oldest).
-    _write(
-        tmp_path, "run-1", {"etl": 0.1}, run_ts=datetime.datetime(2026, 5, 27, 10, 0, 0)
-    )
+    _write(tmp_path, "run-1", {"etl": 0.1}, run_ts=datetime.datetime(2026, 5, 27, 10, 0, 0))
     _write(
         tmp_path,
         "run-2",
@@ -194,9 +186,7 @@ def test_third_write_baseline_is_oldest_run(tmp_path: Path) -> None:
     )
 
     snaps = read_component_snapshots(tmp_path)
-    run3_etl = snaps.filter(
-        (snaps["run_id"] == "run-3") & (snaps["component"].cast(str) == "etl")
-    )
+    run3_etl = snaps.filter((snaps["run_id"] == "run-3") & (snaps["component"].cast(str) == "etl"))
     # vs_prev: (70 - 80) / 80 * 100 = -12.5
     assert abs(run3_etl["vs_prev_p50_pct"][0] - (-12.5)) < 1e-6
     # vs_baseline: (70 - 100) / 100 * 100 = -30.0
@@ -204,9 +194,7 @@ def test_third_write_baseline_is_oldest_run(tmp_path: Path) -> None:
 
 
 def test_append_accumulates_run_rows(tmp_path: Path) -> None:
-    _write(
-        tmp_path, "run-1", {"etl": 0.1}, run_ts=datetime.datetime(2026, 5, 28, 10, 0, 0)
-    )
+    _write(tmp_path, "run-1", {"etl": 0.1}, run_ts=datetime.datetime(2026, 5, 28, 10, 0, 0))
     _write(
         tmp_path,
         "run-2",
@@ -220,9 +208,7 @@ def test_append_accumulates_run_rows(tmp_path: Path) -> None:
 
 
 def test_append_accumulates_snapshot_rows(tmp_path: Path) -> None:
-    _write(
-        tmp_path, "run-1", {"etl": 0.1}, run_ts=datetime.datetime(2026, 5, 28, 10, 0, 0)
-    )
+    _write(tmp_path, "run-1", {"etl": 0.1}, run_ts=datetime.datetime(2026, 5, 28, 10, 0, 0))
     _write(
         tmp_path,
         "run-2",

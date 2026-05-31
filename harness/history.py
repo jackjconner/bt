@@ -148,9 +148,7 @@ def _upsert_parquet(path: Path, new_rows: pl.DataFrame) -> None:
     combined.write_parquet(path)
 
 
-def _delta_pct(
-    component: str, current_p50_ms: float, ref: pl.DataFrame | None
-) -> float | None:
+def _delta_pct(component: str, current_p50_ms: float, ref: pl.DataFrame | None) -> float | None:
     if ref is None or ref.is_empty():
         return None
     rows = ref.filter(ref["component"].cast(pl.String) == component)
