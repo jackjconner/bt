@@ -71,13 +71,19 @@ uv run ty check                                             # strict types, erro
 
 ## Agentic improvement loop
 
-The repo ships a skill — `.claude/skills/component-improvement-loop/` — for
-iteratively improving a component *behind its public API*. A head agent proposes
-a target (often a profiling-flagged hotspot), fans out per-component sub-agents
-in isolated git worktrees, and each lands a reviewed PR (`pr-writeup.md`) gated
-on **lint · types · correctness · profiling · evaluation**. PRs serial-merge
-with post-merge re-validation; a docs agent reconciles afterward. Two ledgers
-keep the loop honest:
+The repo ships two skills for iteratively improving a component *behind its
+public API*, split by role:
+
+- `.claude/skills/improvement-orchestrator/` — the **conductor**. Proposes a
+  target (often a profiling-flagged hotspot), fans out per-component workers in
+  isolated git worktrees, adjudicates the gates, serial-merges with post-merge
+  re-validation, ratchets the baseline, and dispatches a docs agent afterward.
+- `.claude/skills/component-improvement-loop/` — the **worker** a dispatched
+  sub-agent follows: improve one component in your worktree, keep the change
+  additive, and land a reviewed PR (`pr-writeup.md`).
+
+Every PR is gated on **lint · types · correctness · profiling · evaluation**.
+Two ledgers keep the loop honest:
 
 - `IMPROVEMENTS.md` — append-only round log (the loop's memory + dedup source)
 - `API_REQUESTS.md` — inter-agent data requests; APIs only ever grow additively

@@ -52,12 +52,14 @@ strict with `error-on-warning`. Both are green repo-wide.
   enforces them per commit. ty was driven 293→0 with no suppression (schema
   `DataTypeLike` annotation, `etl.source.to_float` for polars-aggregation
   typing, generic `ComponentBenchmark`, widened annotations, typed casts).
-- `.claude/skills/component-improvement-loop/` — the skill for iteratively
-  improving a component behind its API: head agent proposes a target, fans out
-  per-component sub-agents in worktrees, each lands a PR (`pr-writeup.md`)
-  gated on lint/types/correctness/profiling/evaluation, serial-merged with
-  re-validation, then a docs agent reconciles. Ledgers: `IMPROVEMENTS.md`
-  (round log + dedup) and `API_REQUESTS.md` (inter-agent data requests).
+- Two skills, split by role, for iteratively improving a component behind its
+  API: `.claude/skills/improvement-orchestrator/` (the conductor — proposes a
+  target, fans out per-component workers in worktrees, adjudicates the gates,
+  serial-merges with re-validation, ratchets, then dispatches a docs agent) and
+  `.claude/skills/component-improvement-loop/` (the worker a dispatched sub-agent
+  follows — additive change in its lane, lands a PR via `pr-writeup.md`). Every
+  PR gated on lint/types/correctness/profiling/evaluation. Ledgers:
+  `IMPROVEMENTS.md` (round log + dedup) and `API_REQUESTS.md` (data requests).
 
 ## Don't lose
 - `data/` dir is stale bytecode only (old pkg removed in 5fc0dfe); ignore it.
