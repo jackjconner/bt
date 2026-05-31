@@ -187,6 +187,7 @@ def run_production_pipeline(
         risk_aversion=opt_risk_aversion,
         max_iter=opt_max_iter,
         solver="osqp",
+        factor_risk_model=risk_model,
     )
     factor_vol = float(np.sqrt(max(risk_model.portfolio_variance(opt.weights), 0.0)))
     bench_w = np.full(spec.n_assets, 1.0 / spec.n_assets)
