@@ -46,6 +46,13 @@ mandate — and what "done" looks like — depends on the type:
   incumbent (a different engine, algorithm, or data layout); a minimal diff is a
   *failed* explore. You are one of K siblings on the same target — a judge ranks
   you against them, so take the approach the others won't.
+- **consolidate** — **remove a superseded path.** A prior round added a
+  replacement and kept the old impl as a shadow/oracle; delete the old
+  implementation + its flag, make the replacement the sole path, and update every
+  call site. The golden must come back **byte-identical** (`scripts/gate eval
+  --tolerance 0`) — you are removing *dead* code, not changing behavior. Keep a
+  path only if it is still genuinely used (a real fallback) or is a test oracle a
+  test still references; say which in the PR.
 
 ## The gates (your PR must pass all of them — run and quote each)
 
@@ -59,7 +66,7 @@ for the timed run — so you never source diskguard or memorize an invocation.
 | **lint + types** | `scripts/gate lint` (ruff check + format --check + ty) | clean; warnings are errors, `error-on-warning`. No `# type: ignore` / suppression — fix or widen. Also enforced per commit by `scripts/committer`. |
 | **correctness / regression** | `scripts/gate test <component>/ tests/integration/` (or `scripts/gate test` for the full suite) | still green — same count, no new failures. The integration suite imports across components, so a broken contract fails *here*. |
 | **profiling** | `scripts/gate bench` (harness through the bench lock) + `check_regressions` vs the ratcheted baseline | per round type: **improved** (exploit), **no regression** (refactor / feature), or **improved-or-justified-tie** (explore). No other stage regresses past threshold. |
-| **evaluation** | `scripts/gate eval` → `PipelineSummary` vs the round's **golden** (add `--tolerance 0` for refactor, `--allow-new-fields` for feature) | per type: holds within tolerance (exploit / explore), **byte-identical** (refactor), or holds + **new fields** (feature). A genuine accuracy improvement is the one case a number *should* move — justify it. |
+| **evaluation** | `scripts/gate eval` → `PipelineSummary` vs the round's **golden** (add `--tolerance 0` for refactor/consolidate, `--allow-new-fields` for feature) | per type: holds within tolerance (exploit / explore), **byte-identical** (refactor / consolidate), or holds + **new fields** (feature). A genuine accuracy improvement is the one case a number *should* move — justify it. |
 
 `scripts/gate all <component>` runs lint + test + eval in order for a fast check.
 
@@ -70,17 +77,26 @@ move the numbers*. A speedup that changes the Sharpe is a correctness regression
 wearing a profiling win's clothes. A genuine accuracy improvement is the one case
 the numbers *should* move — your writeup must say so and show why it's correct.
 
-## API discipline — additive only
+## API discipline — removal allowed, prefer two-phase
 
-The contract is your component's `__all__` plus its `_protocol.py` Protocol. You
-may **extend** it, never shrink it (this is why every POC path still runs — see
-DECISIONS.md, additive-API discipline):
+bt has **no external API consumers**, so backwards-compat is not a goal (see
+[[DECISIONS]], "no backwards-compat; two-phase add-then-consolidate"). You **may**
+remove or rename internal symbols, change signatures, and delete superseded paths
+— *provided you update every call site* and the **golden stays byte-identical**
+(`scripts/gate eval --tolerance 0`) with the integration suite green. Those two
+are the guards that a removal didn't change behavior; the integration suite
+imports across the component boundary, so a broken cross-component contract fails
+there.
 
-- Never remove or rename an exported symbol. Never change an existing signature.
-- New parameters take defaults; new dataclass fields take defaults. "Version up"
-  means *add* a field/function — the old call site keeps working byte-for-byte.
-- A contract break is caught at the correctness gate: integration tests import
-  across the boundary.
+- **Preferred workflow is two-phase.** On explore/feature rounds, *add* the new
+  path additively and keep the old one as a correctness **oracle** while your
+  change is under review — it's how you prove bit-identity. A later
+  **consolidate** round deletes the now-dead shadow.
+- **On a `consolidate` round, removal is the job:** delete the shadow + its flag,
+  make the replacement sole, update call sites; golden byte-identical.
+- Still off-limits without a [[design-before-architecture-changes]] talk:
+  changing a **cross-component data contract** (the frame shapes / new-or-moved
+  `PipelineSummary` fields other components consume). Internal cleanup is yours.
 
 ## Worktree, PR, and scope
 
@@ -118,8 +134,11 @@ DECISIONS.md, additive-API discipline):
 
 ## Anti-patterns
 
-- Changing a signature or dropping a symbol "to clean up" — breaks downstream;
-  rejected. Additive only.
+- Dropping a symbol or changing a signature **without updating every call site**,
+  or in a way that moves the golden — that's a real break. Removal itself is fine
+  (golden byte-identical + integration green); an *un-updated* removal is not.
+- Keeping a dead shadow path around "to be safe" past its consolidate round, or
+  deleting a path that is still genuinely used / is a live test oracle.
 - A PR that edits outside your component's lane.
 - Crossing a component boundary instead of posting to `API_REQUESTS.md`.
 - A sweeping rewrite on an `exploit`/`refactor` round when a small diff would win
