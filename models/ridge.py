@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import numpy as np
 from sklearn.linear_model import Ridge
@@ -19,21 +19,21 @@ class ModelResult:
     train_r2: float
 
 
-@dataclass(frozen=True)
 class RidgeModel:
-    config: ModelConfig
-    _model: Ridge = field(compare=False, repr=False, default=None)
+    """Stateful estimator: `fit` trains and retains the fitted Ridge for
+    `predict`, sklearn-style. Not frozen because the fit is the state."""
 
-    def _fresh(self) -> Ridge:
-        return Ridge(alpha=self.config.alpha)
+    def __init__(self, config: ModelConfig) -> None:
+        self.config = config
+        self._model: Ridge | None = None
 
     def fit(self, X: np.ndarray, y: np.ndarray) -> ModelResult:
         """Closed-form ridge. CPU is O(n_samples * n_features^2); the Gram
         matrix path costs O(n_features^2) memory when n_features > n_samples.
         """
-        model = self._fresh()
+        model = Ridge(alpha=self.config.alpha)
         model.fit(X, y)
-        object.__setattr__(self, "_model", model)
+        self._model = model
         return ModelResult(
             coef=model.coef_,
             intercept=float(model.intercept_),

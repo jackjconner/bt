@@ -36,16 +36,14 @@ def cv_loop(
 
     for train_idx, test_idx in kf.split(X):
         model = RidgeModel(model_config)
-        model.fit(X[train_idx], y[train_idx])
+        fit_result = model.fit(X[train_idx], y[train_idx])
         preds = model.predict(X[test_idx])
         y_test = y[test_idx]
         ss_res = float(((y_test - preds) ** 2).sum())
         ss_tot = float(((y_test - y_test.mean()) ** 2).sum())
-        r2 = 1.0 - ss_res / ss_tot if ss_tot > 0 else 0.0
-        fold_r2s.append(r2)
-        fold_results.append(
-            ModelResult(coef=model._model.coef_, intercept=float(model._model.intercept_), train_r2=r2)
-        )
+        test_r2 = 1.0 - ss_res / ss_tot if ss_tot > 0 else 0.0
+        fold_r2s.append(test_r2)
+        fold_results.append(fit_result)
 
     arr = np.array(fold_r2s)
     return CVResult(
