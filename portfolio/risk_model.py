@@ -18,13 +18,30 @@ Marginal contribution to risk (MCR) per asset i:
 Component contribution to risk (CCR) per asset i:
   CCR_i = w_i · MCR_i     (sum = portfolio variance)
 
-All inputs are plain numpy arrays; the Polars data wrangling lives in the
-callers. Using numpy throughout avoids repeated DataFrame allocations.
+Structure over density
+----------------------
+The full asset covariance Σ is (n_assets × n_assets) and is the only object
+in this module that scales as n²; everything the downstream optimizer needs —
+``portfolio_variance``, ``factor_variance``, ``marginal_contrib`` — is a
+*structured* product of the (n×k) loadings B, the (k×k) factor covariance and
+the length-n specific variance, all of which scale linearly in n for fixed k.
+
+So Σ is never materialised on the build path: ``cov`` is a lazily-computed,
+cached property.  Code that genuinely needs the dense matrix (risk
+decomposition reports, eigenvalue / PSD checks) touches ``.cov`` and pays the
+n² cost on first access only; the optimizer hot path never does.  Marginal and
+component contributions likewise route through the factored form
+  Σ w = B (F (Bᵀ w)) + specific_var ⊙ w
+which costs O(n·k + k²) instead of forming and multiplying the dense Σ.
+
+All linear-algebra inputs are plain numpy arrays; the Polars→matrix pivot in
+``build_from_long`` is done once, vectorised, with no per-row Python loop and
+without ever holding a dense long frame alongside the matrices.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from typing import TYPE_CHECKING
 
@@ -43,12 +60,20 @@ class FactorRiskModel:
         factor_cov: (n_factors, n_factors) factor covariance matrix.
         specific_var: (n_assets,) idiosyncratic variances (diagonal of D).
         cov:        (n_assets, n_assets) full asset covariance Σ = B F_cov Bᵀ + D.
+                    Lazily materialised and cached on first access — the build
+                    path and the optimizer never trigger it.
     """
 
     B: np.ndarray  # (n_assets, n_factors)
     factor_cov: np.ndarray  # (n_factors, n_factors)
     specific_var: np.ndarray  # (n_assets,)
-    cov: np.ndarray  # (n_assets, n_assets)
+    # Cache slot for the dense Σ.  A single-element list rather than an
+    # attribute so the frozen dataclass can populate it without __setattr__
+    # gymnastics.  Excluded from init/repr/eq/hash: two models with equal
+    # ingredients compare equal regardless of whether either has realised .cov.
+    _cov_cache: list[np.ndarray] = field(
+        default_factory=list, init=False, repr=False, compare=False, hash=False
+    )
 
     @classmethod
     def build(
@@ -57,21 +82,44 @@ class FactorRiskModel:
         factor_cov: np.ndarray,
         specific_var: np.ndarray,
     ) -> FactorRiskModel:
-        """Construct Σ = B · F_cov · Bᵀ + D from raw ingredients.
+        """Construct the model from raw ingredients.
+
+        Σ = B · F_cov · Bᵀ + D is *not* formed here — it is realised lazily on
+        first access to ``.cov``.  Build is therefore O(1) in allocation beyond
+        retaining the (linear-in-n) ingredients.
 
         Args:
             B:            (n_assets, n_factors).
             factor_cov:   (n_factors, n_factors). Must be positive semi-definite.
             specific_var: (n_assets,) non-negative idiosyncratic variances.
         """
-        factor_part = B @ factor_cov @ B.T
-        D = np.diag(specific_var)
-        cov = factor_part + D
-        return cls(B=B, factor_cov=factor_cov, specific_var=specific_var, cov=cov)
+        return cls(
+            B=np.asarray(B, dtype=float),
+            factor_cov=np.asarray(factor_cov, dtype=float),
+            specific_var=np.asarray(specific_var, dtype=float),
+        )
+
+    @property
+    def cov(self) -> np.ndarray:
+        """Dense Σ = B F_cov Bᵀ + D, materialised and cached on first access.
+
+        This is the only n² object in the model.  Tests, PSD/eigenvalue checks,
+        and risk-decomposition reports that need the explicit matrix read it
+        here; the optimizer and the variance/contribution helpers below stay on
+        the factored path and never trigger this allocation.
+        """
+        if not self._cov_cache:
+            cov = self.B @ self.factor_cov @ self.B.T
+            # Add D in place along the diagonal — avoids a second n² allocation
+            # that np.diag(specific_var) would incur.
+            diag = np.einsum("ii->i", cov)
+            diag += self.specific_var
+            self._cov_cache.append(cov)
+        return self._cov_cache[0]
 
     def portfolio_variance(self, w: np.ndarray) -> float:
-        """Total portfolio variance wᵀ Σ w."""
-        return float(w @ self.cov @ w)
+        """Total portfolio variance wᵀ Σ w (factored: O(n·k + k²), no dense Σ)."""
+        return self.factor_variance(w) + self.specific_variance(w)
 
     def factor_variance(self, w: np.ndarray) -> float:
         """Variance explained by systematic factor exposures."""
@@ -89,8 +137,12 @@ class FactorRiskModel:
 
         Returned without the factor of 2 so that CCR sums to portfolio
         variance (the 2 cancels in the w_i · MCR_i form used by convention).
+
+        Computed via the factored form Σ w = B (F (Bᵀ w)) + specific_var ⊙ w,
+        which is O(n·k + k²) and never forms the dense Σ.
         """
-        return self.cov @ w
+        Bw = self.B.T @ w  # (k,)
+        return self.B @ (self.factor_cov @ Bw) + self.specific_var * w
 
     def component_contrib(self, w: np.ndarray) -> np.ndarray:
         """Per-asset component contribution: CCR_i = w_i · (Σ w)_i.
@@ -118,8 +170,11 @@ def build_from_long(
 ) -> FactorRiskModel:
     """Extract a single-date FactorRiskModel from long-format Polars frames.
 
-    Filters each DataFrame to `as_of_date` and pivots to arrays. Assets and
-    factors are sorted by integer id so the matrices are consistently aligned.
+    Filters each frame to ``as_of_date`` and pivots to dense matrices in one
+    vectorised pass per frame — no per-row Python loop, no dense long frame
+    held alongside the matrices.  Assets and factors are sorted by integer id
+    so B, F_cov and specific_var are consistently aligned, matching the
+    ordering the optimizer expects.
 
     Args:
         factor_loadings:  long (date, id, factor_id, loading).
@@ -131,27 +186,36 @@ def build_from_long(
 
     date_ = as_of_date
 
-    # --- B: (n_assets, n_factors) ---
-    bl = factor_loadings.filter(pl.col("date") == date_).sort(["id", "factor_id"])
-    assets = sorted(bl["id"].unique().to_list())
-    factors = sorted(bl["factor_id"].unique().to_list())
-    na, nk = len(assets), len(factors)
-    asset_idx = {a: i for i, a in enumerate(assets)}
-    factor_idx = {f: i for i, f in enumerate(factors)}
-    B = np.zeros((na, nk))
-    for row in bl.iter_rows(named=True):
-        B[asset_idx[row["id"]], factor_idx[row["factor_id"]]] = row["loading"]
+    # --- B: (n_assets, n_factors) -----------------------------------------
+    # Pull only the columns we need for this date as contiguous numpy, then
+    # scatter into a zero matrix by dense rank of (id, factor_id).  The whole
+    # pivot is three numpy arrays + np.unique; the long rows are never widened
+    # into a dense intermediate frame.
+    bl = factor_loadings.filter(pl.col("date") == date_)
+    ids = bl["id"].to_numpy()
+    fids = bl["factor_id"].to_numpy()
+    loadings = bl["loading"].to_numpy()
 
-    # --- F_cov: (n_factors, n_factors) ---
-    fc = factor_covariance.filter(pl.col("date") == date_).sort(["factor_i", "factor_j"])
-    F_cov = np.zeros((nk, nk))
-    for row in fc.iter_rows(named=True):
-        i, j = factor_idx[row["factor_i"]], factor_idx[row["factor_j"]]
-        F_cov[i, j] = row["cov"]
+    assets, asset_pos = np.unique(ids, return_inverse=True)
+    factors, factor_pos = np.unique(fids, return_inverse=True)
+    na, nk = int(assets.shape[0]), int(factors.shape[0])
 
-    # --- specific_var: (n_assets,) ---
-    sr = specific_risk.filter(pl.col("date") == date_).sort("id")
-    spec_map = dict(zip(sr["id"].to_list(), sr["specific_var"].to_list(), strict=False))
-    specific_var = np.array([spec_map[a] for a in assets])
+    B = np.zeros((na, nk), dtype=float)
+    B[asset_pos, factor_pos] = loadings
+
+    # --- F_cov: (n_factors, n_factors) ------------------------------------
+    # factor_i / factor_j index into the same factor universe as B's columns;
+    # searchsorted maps each factor id to its column index in sorted `factors`.
+    fc = factor_covariance.filter(pl.col("date") == date_)
+    fi_pos = np.searchsorted(factors, fc["factor_i"].to_numpy())
+    fj_pos = np.searchsorted(factors, fc["factor_j"].to_numpy())
+    F_cov = np.zeros((nk, nk), dtype=float)
+    F_cov[fi_pos, fj_pos] = fc["cov"].to_numpy()
+
+    # --- specific_var: (n_assets,) ----------------------------------------
+    sr = specific_risk.filter(pl.col("date") == date_)
+    s_pos = np.searchsorted(assets, sr["id"].to_numpy())
+    specific_var = np.zeros(na, dtype=float)
+    specific_var[s_pos] = sr["specific_var"].to_numpy()
 
     return FactorRiskModel.build(B=B, factor_cov=F_cov, specific_var=specific_var)
