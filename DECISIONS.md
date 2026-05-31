@@ -115,3 +115,41 @@ sections are rewritten to "removal allowed, prefer two-phase." Round 005 left 5
 shadowed components — the genuinely-dead paths (e.g. signals `engine="matrix"`)
 are the first consolidate targets; functional fallbacks (models' non-ridge loop,
 etl's oracle) stay until truly unused.
+
+## 2026-05-31 — Per-feature default-state decision (on/off is deliberate, not reflex)
+
+**Context:** Round 007 (the first `feature` round) shipped all 7 features behind
+flags defaulting **off**, holding the golden byte-identical. That was the right call
+for the round, but it made "default-off" an unexamined reflex: backtest
+short-availability gating, etl quality-flag columns, and models fold diagnostics now
+sit **dormant** — merged, tested, correct, but never exercised by the production
+pipeline. Some features (pure additive observability) could safely default on;
+others (short-gating) *should* default on eventually because unconstrained shorting
+is arguably a correctness bug — but flipping them on moves the golden, so it needs a
+deliberate, justified decision, not a silent default.
+
+**Decision:** For every feature, the **default state of its flag is a deliberate
+per-feature decision made when proposing the slate**, with Jack's sign-off, recorded
+in the round report + `IMPROVEMENTS.md`. Three cases: (1) **off by default**
+(dormant) — required when turning it on would move the golden or change a consumed
+contract; the conservative default, flipped on later. (2) **on by default, golden
+unmoved** — pure additive observability (a new field/column nothing yet consumes);
+allowed with Jack's ok, gated by `--allow-new-fields` + a golden re-save. (3) **on by
+default, golden moves** — a *correctness* decision treated like an exploit
+accuracy-move: Jack approves, the golden is re-saved, the writeup justifies the new
+number. The worker implements the flag; the orchestrator sets which way it defaults
+(it is part of the brief).
+
+**Rationale:** The whole point of the flag-off/two-phase discipline is *safety while
+landing*, not permanent dormancy. A capability that never runs in production adds no
+value and risks bit-rot. Making the default an explicit decision forces the question
+"should this be live?" every time, and routes the golden-moving cases through the
+same approval+justification path as any other deliberate accuracy change — so
+breadth actually reaches production instead of accumulating as inert flags.
+
+**Consequences:** The orchestrator skill gains a "Per-feature default state" step
+(propose default + rationale, get sign-off); the worker skill takes the default from
+the brief rather than assuming off. The three round-007 dormant features are now
+explicit activation candidates for a future round. No change to the gate machinery —
+a golden-moving default-on is adjudicated exactly like an accuracy move (re-save +
+justify); a golden-neutral default-on is the existing `--allow-new-fields` path.

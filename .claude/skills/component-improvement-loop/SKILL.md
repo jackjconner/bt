@@ -43,6 +43,11 @@ mandate — and what "done" looks like — depends on the type:
   function, a new `_protocol.py` method with a default, or a new
   `PipelineSummary` field. Existing numbers hold; any new fields are gated by
   `evalgate --allow-new-fields`. Ship it with tests that exercise the new path.
+  **The brief sets which way the flag defaults** — don't assume off. Default-off is
+  the usual case (golden byte-identical with the flag off; prove that). If the brief
+  says **default-on**, it has been pre-approved by Jack: the golden may move, the
+  writeup must justify the new value, and you re-run `scripts/gate eval --save`-style
+  capture per the orchestrator. Either way, test both the flag-off and flag-on paths.
 - **explore** — **you are the bold rewrite.** Maximize divergence from the
   incumbent (a different engine, algorithm, or data layout); a minimal diff is a
   *failed* explore. You are one of K siblings on the same target — a judge ranks
