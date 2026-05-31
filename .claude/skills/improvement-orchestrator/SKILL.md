@@ -33,10 +33,10 @@ unchanged.
 | type | target source | worker mandate | profiling gate | evaluation gate | extra |
 |---|---|---|---|---|---|
 | **exploit** | harness hotspot (`scaling_fits`) | smallest diff that wins | metric **improved** | golden holds, or justified accuracy move | — |
-| **refactor** | a large/tangled fn or thin-test area | split it up, add unit tests, **no behavior change** | **no regression** (need not improve) | golden **byte-identical** (`--tolerance 0`) | complexity/length down, tests added |
+| **refactor** | a large/tangled fn or thin-test area | split it up, add unit tests, **no behavior change** | **no regression** (need not improve) | golden **byte-identical** (`gate consolidate-check`) | complexity/length down, tests added |
 | **feature** | top of `FEATURE_BACKLOG.md` | **additive** capability behind a flag + tests | no regression on existing stages | existing fields **hold**; new fields ok (`--allow-new-fields`) | capability works under test |
 | **explore** | a bold-rewrite target | **be** the sweeping rewrite — divergence is the point | improved, **or** a justified tie | golden holds, or justified | K-way tournament → judge → hybrid reward |
-| **consolidate** | a component carrying a superseded shadow path from a prior round | **delete** the old impl + its flag, make the replacement sole, update call sites | **no regression** | golden **byte-identical** (`--tolerance 0`) | dead code removed; internal API may shrink |
+| **consolidate** | a component carrying a superseded shadow path from a prior round | **delete** the old impl + its flag, make the replacement sole, update call sites | **no regression** | golden **byte-identical** (`gate consolidate-check`) | dead code removed; internal API may shrink |
 
 **Explore cadence.** Count rounds since the last `type: explore` in
 `IMPROVEMENTS.md`; if ≥ 4 non-explore rounds have passed, the next round is
@@ -52,7 +52,7 @@ record the round `spiked`.
 additively, keeping the incumbent as a correctness oracle while it is reviewed.
 Once it is merged and the golden held, schedule a **`consolidate`** round on that
 component to delete the now-dead shadow + its flag and make the replacement sole
-(golden byte-identical, `scripts/gate eval --tolerance 0`). Removal is allowed in
+(golden byte-identical, `scripts/gate consolidate-check`). Removal is allowed in
 any round (no backwards-compat — see [[DECISIONS]]); the two-phase split just
 keeps the oracle around through review. A fallback/oracle still genuinely *used*
 (a non-ridge code path, a test oracle) stays until truly unused. Target source:
@@ -91,7 +91,7 @@ is the difference between a clean round and a capsized one. See [[workspace-isol
      + the **eval tolerance**.
    - `refactor` — pick a flagged large/tangled function or a thin-test area; the
      "metric" is structural (length/complexity down, tests added) and the eval
-     gate is golden **byte-identical** (`evalgate --tolerance 0`).
+     gate is golden **byte-identical** (`scripts/gate consolidate-check`).
    - `feature` — run a fan-out **ideation** sub-step: agents score candidate
      capabilities against `VISION.md` + `PRODUCTION_PLAN.md` tier-2/3 and append
      `queued` rows to `FEATURE_BACKLOG.md`; build the **top Jack-prioritized**
@@ -161,7 +161,7 @@ adjudicate are correctness, profiling, and evaluation:
 |---|---|---|
 | **correctness** | `scripts/gate test` (unit + `tests/integration/`) | **all types:** still green — same count, no new failures (a broken contract fails in the integration suite). refactor/feature additionally *add* tests. |
 | **profiling** | `scripts/gate bench` → `check_regressions` vs the ratcheted baseline | **exploit:** target metric *improved*. **refactor / feature / consolidate:** *no regression* past threshold (need not improve). **explore:** *improved, or a justified tie*. |
-| **evaluation** | `scripts/gate eval` → `PipelineSummary` diffed vs the **golden** | **exploit / explore:** golden holds within tolerance, or a justified accuracy move. **refactor / consolidate:** **byte-identical** (`scripts/gate eval --tolerance 0`) — a consolidate that removes a *dead* path must not move a single number. **feature:** existing fields hold + **new fields allowed** (`scripts/gate eval --allow-new-fields`); re-save the golden post-merge to absorb them. |
+| **evaluation** | `scripts/gate eval` (exploit/explore/feature) or `scripts/gate consolidate-check` (refactor/consolidate) → `PipelineSummary` diffed vs the **golden** | **exploit / explore:** golden holds within tolerance, or a justified accuracy move. **refactor / consolidate:** **byte-identical** via `scripts/gate consolidate-check` — a direct vs-`main` diff that cancels the stored golden's pre-existing ~1e-16 fp-noise (which makes `eval --tolerance 0` flag spuriously); a removal of *dead* code must not move a single number. **feature:** existing fields hold + **new fields allowed** (`scripts/gate eval --allow-new-fields`); re-save the golden post-merge to absorb them. |
 
 Evaluation is the subtle one: a speedup that moves the Sharpe is a correctness
 regression wearing a profiling win's clothes — the golden diff catches it. A
