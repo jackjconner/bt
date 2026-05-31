@@ -11,6 +11,8 @@ import math
 from pathlib import Path
 
 from evalgate._core import (
+    additive_only,
+    classify_diff,
     diff_summaries,
     format_diff_table,
     load_golden,
@@ -372,3 +374,100 @@ def test_field_tol_does_not_affect_other_fields() -> None:
     rows = {r.field: r for r in diff_summaries(golden, current, field_tol={"backtest_p50_s": 1.0})}
     assert rows["backtest_p50_s"].passed  # exempt
     assert not rows["ic_raw"].passed  # still fails default tol
+
+
+# ---------------------------------------------------------------------------
+# classify_diff — partition a diff into held / new / missing / moved
+# ---------------------------------------------------------------------------
+
+
+def test_classify_all_held() -> None:
+    base = _make_summary()
+    c = classify_diff(diff_summaries(base, base.copy()))
+    assert c.new_fields == []
+    assert c.missing_fields == []
+    assert c.moved_existing == []
+    # Every top-level + horizon_ic[k] row landed in held.
+    assert len(c.held) == len(diff_summaries(base, base.copy()))
+
+
+def test_classify_new_top_level_field() -> None:
+    golden = _make_summary()
+    current = {**_make_summary(), "new_metric": 42.0}
+    c = classify_diff(diff_summaries(golden, current))
+    assert [r.field for r in c.new_fields] == ["new_metric"]
+    assert c.missing_fields == []
+    assert c.moved_existing == []
+
+
+def test_classify_missing_top_level_field() -> None:
+    golden = _make_summary()
+    current = {k: v for k, v in _make_summary().items() if k != "cost_drag"}
+    c = classify_diff(diff_summaries(golden, current))
+    assert [r.field for r in c.missing_fields] == ["cost_drag"]
+    assert c.new_fields == []
+    assert c.moved_existing == []
+
+
+def test_classify_moved_existing_value() -> None:
+    golden = _make_summary(ic_raw=0.05)
+    current = _make_summary(ic_raw=0.06)  # 20% move, past default tol
+    c = classify_diff(diff_summaries(golden, current))
+    assert [r.field for r in c.moved_existing] == ["ic_raw"]
+    assert c.new_fields == []
+    assert c.missing_fields == []
+
+
+def test_classify_new_horizon_key_is_new_field() -> None:
+    golden = _make_summary(horizon_ic={"1": 0.05})
+    current = _make_summary(horizon_ic={"1": 0.05, "99": 0.01})  # added sub-key
+    c = classify_diff(diff_summaries(golden, current))
+    assert [r.field for r in c.new_fields] == ["horizon_ic[99]"]
+    assert c.missing_fields == []
+    assert c.moved_existing == []
+
+
+def test_classify_moved_horizon_key_is_moved_existing() -> None:
+    golden = _make_summary(horizon_ic={"1": 0.051, "5": 0.040, "21": 0.025, "63": 0.010})
+    current = _make_summary(horizon_ic={"1": 0.051, "5": 0.040, "21": 0.999, "63": 0.010})
+    c = classify_diff(diff_summaries(golden, current))
+    assert [r.field for r in c.moved_existing] == ["horizon_ic[21]"]
+    assert c.new_fields == []
+    assert c.missing_fields == []
+
+
+# ---------------------------------------------------------------------------
+# additive_only — the --allow-new-fields decision predicate
+# ---------------------------------------------------------------------------
+
+
+def test_additive_only_true_for_new_fields_only() -> None:
+    golden = _make_summary()
+    current = {**_make_summary(), "new_metric": 42.0}
+    assert additive_only(classify_diff(diff_summaries(golden, current)))
+
+
+def test_additive_only_true_when_all_held() -> None:
+    base = _make_summary()
+    assert additive_only(classify_diff(diff_summaries(base, base.copy())))
+
+
+def test_additive_only_false_for_moved_existing() -> None:
+    golden = _make_summary(ic_raw=0.05)
+    current = _make_summary(ic_raw=0.06)
+    assert not additive_only(classify_diff(diff_summaries(golden, current)))
+
+
+def test_additive_only_false_for_missing_field() -> None:
+    golden = _make_summary()
+    current = {k: v for k, v in _make_summary().items() if k != "cost_drag"}
+    assert not additive_only(classify_diff(diff_summaries(golden, current)))
+
+
+def test_additive_only_false_when_new_and_moved_mixed() -> None:
+    """A run that both adds a field and moves an existing one is NOT additive-only."""
+    golden = _make_summary(ic_raw=0.05)
+    current = {**_make_summary(ic_raw=0.06), "new_metric": 42.0}
+    c = classify_diff(diff_summaries(golden, current))
+    assert c.new_fields and c.moved_existing  # both populated
+    assert not additive_only(c)
