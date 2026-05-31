@@ -29,6 +29,11 @@ from .periodic import (
     monthly_returns_wide,
     quarterly_returns,
 )
+from .report import (
+    AttributionReport,
+    BrinsonDecomposition,
+    analyze_attribution,
+)
 from .risk import (
     annualized_return_calendar,
     best_day,
@@ -60,19 +65,16 @@ from .turnover import (
 )
 
 __all__ = [
-    # metrics (existing public API — never remove)
     "AnalysisResult",
-    # protocol
+    "AttributionReport",
     "BacktestAnalyzer",
     "BacktestAnalyzerImpl",
-    # attribution
+    "BrinsonDecomposition",
     "FactorAttributionResult",
-    # benchmark
     "active_returns",
     "alpha",
-    # periodic
+    "analyze_attribution",
     "annual_returns",
-    # risk
     "annualized_return_calendar",
     "benchmark_returns_to_fractional",
     "best_day",
@@ -81,7 +83,6 @@ __all__ = [
     "calmar",
     "cvar_historical",
     "down_capture",
-    # turnover
     "effective_n",
     "excess_kurtosis",
     "factor_attribution",
@@ -99,7 +100,6 @@ __all__ = [
     "reconstruct_weights",
     "relative_drawdown",
     "returns_from_nav",
-    # rolling
     "rolling_beta",
     "rolling_max_drawdown",
     "rolling_sharpe",

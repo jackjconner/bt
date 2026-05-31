@@ -1,5 +1,6 @@
 from ._protocol import FinancialModel
 from .cross_val import CVConfig, CVResult, cv_loop
+from .leakage import CheckResult, LeakageReport, audit_leakage
 from .models_zoo import ElasticNetConfig, ElasticNetModel, LassoConfig, LassoModel
 from .panel import PanelArrays, build_panel, date_ordinals
 from .persistence import (
@@ -28,23 +29,19 @@ from .walk_forward import (
 __all__ = [
     "CVConfig",
     "CVResult",
+    "CheckResult",
     "ElasticNetConfig",
     "ElasticNetModel",
-    # existing
     "FinancialModel",
     "FoldResult",
-    # walk-forward CV
     "FoldScaler",
-    # model zoo
     "LassoConfig",
     "LassoModel",
-    # persistence
+    "LeakageReport",
     "ModelArtifact",
     "ModelConfig",
     "ModelResult",
-    # panel
     "PanelArrays",
-    # splitters
     "PurgedEmbargoCVSplitter",
     "RidgeModel",
     "RollingWindowSplitter",
@@ -52,6 +49,7 @@ __all__ = [
     "WalkForwardConfig",
     "WalkForwardSplitter",
     "artifact_from_fold",
+    "audit_leakage",
     "build_panel",
     "cv_loop",
     "date_ordinals",
@@ -59,7 +57,6 @@ __all__ = [
     "ic_stats",
     "load_artifact",
     "predict_from_artifact",
-    # scoring
     "rank_ic_score",
     "rank_ic_series",
     "save_artifact",

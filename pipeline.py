@@ -136,7 +136,7 @@ def run_production_pipeline(spec: GenSpec, workdir: Path) -> PipelineSummary:
         long_only=False,
         net_exposure=1.0,
     )
-    opt = mean_variance(alpha_vec, cov, cspec, risk_aversion=1.0, max_iter=3000)
+    opt = mean_variance(alpha_vec, cov, cspec, risk_aversion=1.0, max_iter=3000, solver="osqp")
     factor_vol = float(np.sqrt(max(risk_model.portfolio_variance(opt.weights), 0.0)))
     bench_w = np.full(spec.n_assets, 1.0 / spec.n_assets)
     te = tracking_error(opt.weights, bench_w, cov)
