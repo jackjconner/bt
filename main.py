@@ -115,10 +115,14 @@ PIPELINE_SPEC = GenSpec(n_assets=100, n_dates=252, n_features=20, n_factors=5, s
 # fit_scaling controls for the off-axis dims, so each axis gets a clean slope.
 _FEAT, _FAC, _SEED = 10, 4, 0
 HARNESS_GRID = [
-    # n_assets sweep @ 1yr
+    # n_assets sweep @ 1yr: 50 → 3000 names
     GenSpec(n_assets=50, n_dates=252, n_features=_FEAT, n_factors=_FAC, seed=_SEED),
     GenSpec(n_assets=100, n_dates=252, n_features=_FEAT, n_factors=_FAC, seed=_SEED),  # baseline
     GenSpec(n_assets=200, n_dates=252, n_features=_FEAT, n_factors=_FAC, seed=_SEED),
+    GenSpec(n_assets=500, n_dates=252, n_features=_FEAT, n_factors=_FAC, seed=_SEED),
+    GenSpec(n_assets=1000, n_dates=252, n_features=_FEAT, n_factors=_FAC, seed=_SEED),
+    GenSpec(n_assets=2000, n_dates=252, n_features=_FEAT, n_factors=_FAC, seed=_SEED),
+    GenSpec(n_assets=3000, n_dates=252, n_features=_FEAT, n_factors=_FAC, seed=_SEED),
     # n_dates sweep @ 100 assets: 3 / 5 / 8 / 20 years
     GenSpec(n_assets=100, n_dates=756, n_features=_FEAT, n_factors=_FAC, seed=_SEED),
     GenSpec(n_assets=100, n_dates=1260, n_features=_FEAT, n_factors=_FAC, seed=_SEED),
