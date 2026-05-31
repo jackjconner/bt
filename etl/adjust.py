@@ -159,22 +159,39 @@ def adjust_prices(
         pl.col("action_type").cast(pl.String).is_in(["split", "cash_dividend", "special_dividend"])
     ).sort("ex_date")
 
-    # Work per asset: sort dates descending, apply factors in reverse-ex order.
-    ids = sorted(prices["id"].unique().to_list())
-    all_prices_by_id = {aid: prices.filter(pl.col("id") == aid).sort("date") for aid in ids}
-    ca_by_id = {aid: ca.filter(pl.col("id") == aid).sort("ex_date") for aid in ids}
+    # Partition prices and CA into per-id dicts with a single sort+partition_by
+    # pass instead of N individual filter operations (one per asset).  Only the
+    # ~14% of assets that actually have CA events go through _adjust_single_asset;
+    # the rest get adj_close = close in one vectorised concat.
+    prices_sorted = prices.sort(["id", "date"])
+    prices_by_id: dict[int, pl.DataFrame] = {
+        int(part["id"][0]): part for part in prices_sorted.partition_by("id", maintain_order=True)
+    }
+
+    ca_by_id: dict[int, pl.DataFrame] = (
+        {int(part["id"][0]): part for part in ca.partition_by("id", maintain_order=True)}
+        if not ca.is_empty()
+        else {}
+    )
+
+    ids_with_ca: set[int] = set(ca_by_id.keys())
 
     adj_frames: list[pl.DataFrame] = []
     all_log_rows: list[dict] = []
+    no_ca_parts: list[pl.DataFrame] = []
 
-    for aid in ids:
-        pdf = all_prices_by_id[aid]
-        if pdf.is_empty():
-            continue
-        actions = ca_by_id.get(aid)
-        adj_frame, log_rows = _adjust_single_asset(pdf, actions, close_col)
-        adj_frames.append(adj_frame)
-        all_log_rows.extend(log_rows)
+    for aid, pdf in prices_by_id.items():
+        if aid in ids_with_ca:
+            adj_frame, log_rows = _adjust_single_asset(pdf, ca_by_id[aid], close_col)
+            adj_frames.append(adj_frame)
+            all_log_rows.extend(log_rows)
+        else:
+            no_ca_parts.append(pdf)
+
+    # Assets with no CA events: add adj_close = close in one vectorised step.
+    if no_ca_parts:
+        no_ca_block = pl.concat(no_ca_parts).with_columns(pl.col(close_col).alias("adj_close"))
+        adj_frames.append(no_ca_block)
 
     if adj_frames:
         result_prices = pl.concat(adj_frames).sort("date", "id")

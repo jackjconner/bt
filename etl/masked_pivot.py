@@ -57,19 +57,20 @@ def to_masked_matrix(
     dates: list[date] = sorted(df["date"].unique().to_list())
     ids: list[int] = sorted(df["id"].unique().to_list())
 
-    n_dates, n_ids = len(dates), len(ids)
-    date_idx = {d: i for i, d in enumerate(dates)}
-    id_idx = {v: j for j, v in enumerate(ids)}
+    # Polars pivot produces the dense wide frame in Rust — no Python loop over
+    # rows.  Columns are labelled by the string representation of each id value,
+    # in the order they appear after sorting by (date, id).  We sort before
+    # pivoting so the id column order is ascending (matching `ids`).
+    wide = (
+        df.sort(["date", "id"])
+        .pivot(on="id", index="date", values=value_col, aggregate_function="first")
+        .sort("date")
+    )
 
-    matrix = np.zeros((n_dates, n_ids), dtype=np.float64)
-    mask = np.zeros((n_dates, n_ids), dtype=bool)
+    # Extract the numeric block; missing (date, id) pairs become NaN in the
+    # pivot output.  Build the mask before zeroing them out.
+    mat_np = wide.drop("date").to_numpy()
+    mask = ~np.isnan(mat_np)
+    np.nan_to_num(mat_np, copy=False, nan=0.0)
 
-    for row in df.select("date", "id", value_col).iter_rows():
-        d, asset_id, val = row
-        di = date_idx[d]
-        ji = id_idx[asset_id]
-        if val is not None and not (isinstance(val, float) and np.isnan(val)):
-            matrix[di, ji] = val
-            mask[di, ji] = True
-
-    return matrix, mask, dates, ids
+    return mat_np, mask, dates, ids
