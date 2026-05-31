@@ -88,6 +88,13 @@ def test_verdict_rejected(tmp_path: Path) -> None:
     assert fm.verdict == "rejected"
 
 
+def test_verdict_pending(tmp_path: Path) -> None:
+    md = VALID_MD.replace("verdict: accepted", "verdict: pending")
+    p = _write(tmp_path, md)
+    fm, _ = parse_frontmatter(p)
+    assert fm.verdict == "pending"
+
+
 def test_unquoted_values(tmp_path: Path) -> None:
     md = """\
 ---

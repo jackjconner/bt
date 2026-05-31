@@ -107,6 +107,7 @@ a:hover { text-decoration: underline; }
 }
 .verdict-accepted { color: var(--green); }
 .verdict-rejected { color: var(--oxide); }
+.verdict-pending  { color: var(--amber); }
 .report-card-link {
   font-size: 0.8rem;
   color: var(--cyan);
@@ -304,9 +305,17 @@ def _masthead(subtitle: str = "") -> str:
 # ---------------------------------------------------------------------------
 
 
+_VERDICT_CLASS = {
+    "accepted": "verdict-accepted",
+    "rejected": "verdict-rejected",
+    "pending": "verdict-pending",
+}
+_VERDICT_GLYPH = {"accepted": "✓", "rejected": "✗", "pending": "◷"}
+
+
 def _verdict_span(verdict: str) -> str:
-    cls = "verdict-accepted" if verdict == "accepted" else "verdict-rejected"
-    glyph = "✓" if verdict == "accepted" else "✗"
+    cls = _VERDICT_CLASS.get(verdict, "verdict-rejected")
+    glyph = _VERDICT_GLYPH.get(verdict, "•")
     return f'<span class="{cls}">{glyph} {_html_escape(verdict)}</span>'
 
 

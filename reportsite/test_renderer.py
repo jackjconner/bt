@@ -139,6 +139,23 @@ def test_render_site_empty_creates_index(tmp_path: Path) -> None:
     assert "Awaiting the first swarm" in html
 
 
+def test_render_index_shows_pending_verdict(tmp_path: Path) -> None:
+    r5 = tmp_path / "round-005"
+    r5.mkdir()
+    _write_report(
+        r5,
+        "etl.md",
+        _PORTFOLIO_MD.replace("round: 0", "round: 5").replace(
+            "verdict: accepted", "verdict: pending"
+        ),
+    )
+    index = build_index(tmp_path)
+    html = render_index(index)
+    assert "verdict-pending" in html
+    assert "pending" in html
+    assert "◷" in html
+
+
 def test_render_site_writes_build_id(tmp_path: Path) -> None:
     reports_dir = _fixture_reports_dir(tmp_path)
     index = build_index(reports_dir)
