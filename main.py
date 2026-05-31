@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import datetime
+import os
 import shutil
 import tempfile
 from pathlib import Path
@@ -19,7 +21,16 @@ from portfolio import (
     random_loadings,
     rolling_vol,
 )
-from profiling import ScalingResult, collect_stage, print_report
+from profiling import (
+    ScalingResult,
+    capture_cpu,
+    capture_environment,
+    capture_memory,
+    collect_stage,
+    print_report,
+    prune_profiles,
+    write_artifacts,
+)
 from signals import ICEvaluator
 
 PARAM_GRID: list[dict[str, int]] = [
@@ -131,7 +142,47 @@ HARNESS_GRID = [
 ]
 
 
+def _profile_full_pipeline(pipe_dir: Path, profiles_dir: Path) -> None:
+    """Capture the whole production pipeline as one flame graph (CPU + memory).
+
+    Runs the pipeline once under each profiler (pyinstrument and memray each wrap
+    a single execution) — acceptable for this opt-in manual entry point.  The
+    whole-pipeline flame graph already contains every component's subtree, so a
+    single capture decomposes the full run.  Uses a timestamped run_id so
+    prune_profiles can retain the latest N.
+    """
+    ts = datetime.datetime.now()
+    run_id = f"full_pipeline-{ts:%Y%m%dT%H%M%S}-{ts.microsecond:06d}"
+    git_sha = capture_environment("full_pipeline").git_sha
+    summary, cpu_arts = capture_cpu(
+        "full_pipeline",
+        lambda: run_production_pipeline(PIPELINE_SPEC, pipe_dir),
+        profiles_dir=profiles_dir,
+        run_id=run_id,
+        param_point_id=0,
+        git_sha=git_sha,
+    )
+    _, mem_arts = capture_memory(
+        "full_pipeline",
+        lambda: run_production_pipeline(PIPELINE_SPEC, pipe_dir),
+        profiles_dir=profiles_dir,
+        run_id=run_id,
+        param_point_id=0,
+        git_sha=git_sha,
+    )
+    write_artifacts(profiles_dir, cpu_arts + mem_arts)
+    prune_profiles(profiles_dir, keep_last_n=5)
+    print_pipeline_summary(summary)
+
+
 def main() -> None:
+    # Flame-graph capture is opt-in: set BT_FLAMEGRAPHS=1 to also emit per-stage
+    # CPU/memory profiles into .oversight/profiles.  Off by default so the plain
+    # run is unchanged (and pays no double-execution cost).
+    profiles_dir: Path | None = None
+    if os.environ.get("BT_FLAMEGRAPHS"):
+        profiles_dir = Path.cwd() / ".oversight" / "profiles"
+
     workdir = Path(tempfile.mkdtemp(prefix="bt_scaling_"))
     try:
         for params in PARAM_GRID:
@@ -140,7 +191,10 @@ def main() -> None:
 
         pipe_dir = Path(tempfile.mkdtemp(prefix="bt_pipeline_"))
         try:
-            print_pipeline_summary(run_production_pipeline(PIPELINE_SPEC, pipe_dir))
+            if profiles_dir is not None:
+                _profile_full_pipeline(pipe_dir, profiles_dir)
+            else:
+                print_pipeline_summary(run_production_pipeline(PIPELINE_SPEC, pipe_dir))
         finally:
             shutil.rmtree(pipe_dir, ignore_errors=True)
 
@@ -161,6 +215,7 @@ def main() -> None:
                     warmup=1,
                     history_dir=history_dir,
                     agent_ctx=agent_ctx,
+                    profiles_dir=profiles_dir,
                 )
             )
         finally:

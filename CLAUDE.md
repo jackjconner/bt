@@ -37,6 +37,17 @@ prune_profiles(pdir, keep_last_n=5)   # keeps latest N runs + any flagged on_reg
   the frames inside it. Seeing into Polars' Rust needs py-spy `--native` (ptrace,
   intentionally not used); memray already gives native frames for memory.
 
+**Wired-in capture (opt-in, off by default):**
+
+- `run_harness(..., profiles_dir=<dir>)` — captures every component at every grid
+  point in a *separate* pass (never wraps the timed loop), indexes them, prunes
+  to the latest N runs (regressions retained). A unique per-run id is derived
+  from the timestamp so retention works despite the fixed `run_id`.
+- `BT_FLAMEGRAPHS=1 uv run main.py` — flips on both the harness pass and a
+  whole-pipeline `full_pipeline` capture into `.oversight/profiles/`. The
+  whole-pipeline flame graph already contains each component's subtree, so one
+  capture decomposes the full run. Off by default → the plain run pays no cost.
+
 ## Rules
 
 - do not make decisions on architecture, design, or workaround without explicitly consulting me

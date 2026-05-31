@@ -10,12 +10,17 @@ are supplied — a regression check is run against them.
 This is the profiling module dogfooding itself: the harness measures every
 other component using exactly the persistence/scaling/regression machinery the
 profiling component ships.
+
+When a ``profiles_dir`` is supplied, each component is additionally captured as
+a within-stage flame graph (CPU + memory) in a separate single-shot pass — kept
+off the timed loop so sampling overhead never skews the scalar percentiles.  The
+artifacts are indexed and pruned to the latest N runs (regressions retained).
 """
 
 from __future__ import annotations
 
 import datetime
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import polars as pl
@@ -23,14 +28,19 @@ import polars as pl
 from etl import DatasetLoader
 from etl.datasets import GenSpec, write_all
 from profiling import (
+    ProfileArtifact,
     RegressionReport,
     ScalingFit,
     TrialResult,
+    capture_cpu,
     capture_environment,
+    capture_memory,
     check_regressions,
     fit_scaling,
+    prune_profiles,
     read_measurements,
     run_trials,
+    write_artifacts,
     write_run,
 )
 
@@ -72,14 +82,22 @@ def run_harness(
     agent_ctx: AgentContext | None = None,
     annotation: AgentAnnotation | None = None,
     history_dir: Path | None = None,
+    profiles_dir: Path | None = None,
+    profiles_keep_last_n: int = 5,
 ) -> HarnessReport:
     components = components or build_components()
     store_dir.mkdir(parents=True, exist_ok=True)
     run_ts = datetime.datetime.now()
     env = capture_environment(run_id, trials=n_trials, warmup_trials=warmup)
 
+    # prune_profiles keys retention by run_id, but env.run_id is fixed across runs
+    # ("harness"), so derive a unique per-invocation id or "keep latest N" would
+    # collapse to N=1 (every run overwriting the last).
+    profiles_run_id = f"{run_id}-{run_ts:%Y%m%dT%H%M%S}-{run_ts.microsecond:06d}"
+
     stats: list[TrialResult] = []
     trial_results: list[tuple[int, dict[str, int], str, list]] = []
+    artifacts: list[ProfileArtifact] = []
 
     for pp, spec in enumerate(grid):
         data_dir = store_dir / f"data_pp{pp}"
@@ -99,6 +117,29 @@ def run_harness(
             stats.append(tr)
             trial_results.append((pp, params, comp.name, list(tr.trials)))
 
+            # Flame graphs run as a SEPARATE single-shot pass (not wrapping the
+            # timed loop above), so sampling overhead never contaminates the
+            # scalar percentiles.  Opt-in: only when a profiles_dir is supplied.
+            if profiles_dir is not None:
+                _, cpu_arts = capture_cpu(
+                    comp.name,
+                    lambda c=comp, i=inputs: c.run(i),
+                    profiles_dir=profiles_dir,
+                    run_id=profiles_run_id,
+                    param_point_id=pp,
+                    git_sha=env.git_sha,
+                )
+                _, mem_arts = capture_memory(
+                    comp.name,
+                    lambda c=comp, i=inputs: c.run(i),
+                    profiles_dir=profiles_dir,
+                    run_id=profiles_run_id,
+                    param_point_id=pp,
+                    git_sha=env.git_sha,
+                )
+                artifacts.extend(cpu_arts)
+                artifacts.extend(mem_arts)
+
     write_run(store_dir, env, trial_results)
     measurements = read_measurements(store_dir)
     fits = fit_scaling(measurements, run_id=env.run_id)
@@ -111,6 +152,14 @@ def run_harness(
             pl.col("peak_rss_mb").median(),
         )
         regression = check_regressions(current, baselines, thresholds)
+
+    if profiles_dir is not None and artifacts:
+        # Flag this run's profiles as regression evidence so prune_profiles keeps
+        # them past the retention window when the run regressed.
+        if regression is not None and not regression.passed:
+            artifacts = [replace(a, on_regression=True) for a in artifacts]
+        write_artifacts(profiles_dir, artifacts)
+        prune_profiles(profiles_dir, keep_last_n=profiles_keep_last_n)
 
     if history_dir is not None and agent_ctx is not None:
         write_history_run(
