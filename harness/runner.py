@@ -13,13 +13,16 @@ profiling component ships.
 
 When a ``profiles_dir`` is supplied, each component is additionally captured as
 a within-stage flame graph (CPU + memory) in a separate single-shot pass — kept
-off the timed loop so sampling overhead never skews the scalar percentiles.  The
-artifacts are indexed and pruned to the latest N runs (regressions retained).
+off the timed loop so sampling overhead never skews the scalar percentiles.
+``profiles_points`` bounds the cost by restricting capture to selected grid
+indices (default: every point).  The artifacts are indexed and pruned to the
+latest N runs (regressions retained).
 """
 
 from __future__ import annotations
 
 import datetime
+from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
@@ -82,12 +85,23 @@ def run_harness(
     annotation: AgentAnnotation | None = None,
     history_dir: Path | None = None,
     profiles_dir: Path | None = None,
+    profiles_points: Sequence[int] | None = None,
     profiles_keep_last_n: int = 5,
 ) -> HarnessReport:
     components = components or build_components()
     store_dir.mkdir(parents=True, exist_ok=True)
     run_ts = datetime.datetime.now()
     env = capture_environment(run_id, trials=n_trials, warmup_trials=warmup)
+
+    # Which grid points to flame-graph. None → every point (the whole grid is
+    # 7 components × len(grid) captures, which is heavy); pass a subset (e.g. the
+    # largest point per axis) to bound the cost. Validate up front so a typo'd
+    # index fails loudly instead of silently profiling nothing.
+    profile_pps = set(range(len(grid)) if profiles_points is None else profiles_points)
+    if profiles_dir is not None and not profile_pps <= set(range(len(grid))):
+        raise ValueError(
+            f"profiles_points {sorted(profile_pps)} out of range for grid of {len(grid)}"
+        )
 
     # prune_profiles keys retention by run_id, but env.run_id is fixed across runs
     # ("harness"), so derive a unique per-invocation id or "keep latest N" would
@@ -119,8 +133,9 @@ def run_harness(
             # Flame graphs run as a SEPARATE single-shot pass (not wrapping the
             # timed loop above), so sampling overhead never contaminates the
             # scalar percentiles.  capture_both profiles CPU + memory in one
-            # execution.  Opt-in: only when a profiles_dir is supplied.
-            if profiles_dir is not None:
+            # execution.  Opt-in: only when a profiles_dir is supplied, and only
+            # for the selected grid points.
+            if profiles_dir is not None and pp in profile_pps:
                 _, comp_arts = capture_both(
                     comp.name,
                     lambda c=comp, i=inputs: c.run(i),

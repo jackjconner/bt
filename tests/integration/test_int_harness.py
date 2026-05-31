@@ -3,6 +3,8 @@ point, persisted and re-readable, with scaling curves fit over the grid."""
 
 from __future__ import annotations
 
+import pytest
+
 from etl.datasets import GenSpec
 from harness import build_components, run_harness
 from profiling import read_artifacts, read_measurements, read_runs
@@ -59,6 +61,39 @@ def test_harness_no_profiles_dir_skips_capture(tmp_path) -> None:
     grid = [GenSpec(n_assets=20, n_dates=60, n_features=5, n_factors=3, seed=0)]
     run_harness(grid, tmp_path, n_trials=1, warmup=0)
     assert not (tmp_path / "profile_artifacts.parquet").exists()
+
+
+def test_harness_profiles_points_subsets_grid(tmp_path) -> None:
+    """profiles_points restricts capture to the named grid indices only."""
+    store = tmp_path / "store"
+    profiles = tmp_path / "profiles"
+    grid = [
+        GenSpec(n_assets=20, n_dates=60, n_features=5, n_factors=3, seed=0),
+        GenSpec(n_assets=40, n_dates=60, n_features=5, n_factors=3, seed=0),
+        GenSpec(n_assets=80, n_dates=60, n_features=5, n_factors=3, seed=0),
+    ]
+    n_components = len(build_components())
+
+    run_harness(grid, store, n_trials=1, warmup=0, profiles_dir=profiles, profiles_points=[2])
+
+    idx = read_artifacts(profiles)
+    # only param_point_id 2 captured: n_components × 4 artifacts, none from 0 or 1
+    assert idx.height == n_components * 4
+    assert set(idx["param_point_id"].to_list()) == {2}
+
+
+def test_harness_profiles_points_out_of_range_raises(tmp_path) -> None:
+    """An index past the grid length fails loudly rather than profiling nothing."""
+    grid = [GenSpec(n_assets=20, n_dates=60, n_features=5, n_factors=3, seed=0)]
+    with pytest.raises(ValueError, match="out of range"):
+        run_harness(
+            grid,
+            tmp_path / "s",
+            n_trials=1,
+            warmup=0,
+            profiles_dir=tmp_path / "p",
+            profiles_points=[3],
+        )
 
 
 def test_harness_regression_check_optional(tmp_path) -> None:
