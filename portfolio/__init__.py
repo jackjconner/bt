@@ -7,7 +7,7 @@ from .holdings import HoldingsFrame
 from .optimizer import OptimizeResult, mean_variance
 from .risk import drawdown_series, rolling_vol, var_historical
 from .risk_metrics import parametric_cvar, parametric_var, var_cvar_table
-from .risk_model import FactorRiskModel, build_from_long
+from .risk_model import FactorRiskBreakdown, FactorRiskModel, build_from_long
 from .schemes import (
     RebalanceResult,
     Scheme,
@@ -26,6 +26,7 @@ __all__ = [
     "ConstraintSpec",
     "FactorExposure",
     # risk model
+    "FactorRiskBreakdown",
     "FactorRiskModel",
     "HoldingsFrame",
     # optimizer

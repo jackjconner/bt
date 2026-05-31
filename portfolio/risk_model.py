@@ -161,6 +161,66 @@ class FactorRiskModel:
         F = self.factor_cov  # (n_factors, n_factors)
         return Bw * (F @ Bw)  # element-wise; sums to factor_variance
 
+    def factor_risk_breakdown(self, w: np.ndarray) -> FactorRiskBreakdown:
+        """Unified systematic / specific risk attribution for weights ``w``.
+
+        Splits total portfolio variance wᵀ Σ w into its systematic (factor) and
+        idiosyncratic (specific) parts, and further decomposes the factor part
+        into a per-factor contribution vector — all through the factored form
+        Σ = B F_cov Bᵀ + D, never the dense n×n Σ.  The per-factor vector is the
+        existing ``factor_component_contrib`` (no duplication); this method is the
+        public, single-call breakdown built on top of it.
+
+        Identities (exact up to float error):
+          factor_contrib.sum() == factor_variance
+          factor_variance + specific_variance == total_variance
+
+        Returns:
+            FactorRiskBreakdown with total / factor / specific variance, the
+            per-factor contribution vector, and the factor / specific fractions
+            of total variance (0.0 when total variance is 0).
+        """
+        factor_contrib = self.factor_component_contrib(w)
+        factor_var = float(factor_contrib.sum())
+        specific_var = self.specific_variance(w)
+        total_var = factor_var + specific_var
+        if total_var == 0.0:
+            factor_fraction = 0.0
+            specific_fraction = 0.0
+        else:
+            factor_fraction = factor_var / total_var
+            specific_fraction = specific_var / total_var
+        return FactorRiskBreakdown(
+            total_variance=total_var,
+            factor_variance=factor_var,
+            specific_variance=specific_var,
+            factor_contrib=factor_contrib,
+            factor_fraction=factor_fraction,
+            specific_fraction=specific_fraction,
+        )
+
+
+@dataclass(frozen=True)
+class FactorRiskBreakdown:
+    """Systematic / specific risk attribution for a single weight vector.
+
+    Attributes:
+        total_variance:    wᵀ Σ w, the total portfolio variance.
+        factor_variance:   variance from systematic factor exposures.
+        specific_variance: variance from idiosyncratic (stock-specific) risk.
+        factor_contrib:    (n_factors,) per-factor variance contributions;
+                           ``factor_contrib.sum() == factor_variance``.
+        factor_fraction:   factor_variance / total_variance (0.0 if total is 0).
+        specific_fraction: specific_variance / total_variance (0.0 if total is 0).
+    """
+
+    total_variance: float
+    factor_variance: float
+    specific_variance: float
+    factor_contrib: np.ndarray
+    factor_fraction: float
+    specific_fraction: float
+
 
 def build_from_long(
     factor_loadings: pl.DataFrame,  # (date, id, factor_id, loading)
