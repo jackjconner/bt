@@ -6,7 +6,7 @@ import numpy as np
 import polars as pl
 import pytest
 
-from profiling.scaling import fit_scaling, fits_to_dataframe
+from profiling.scaling import ScalingFit, fit_scaling, fits_to_dataframe, stage_metric_r_squared
 
 
 def _linear_measurements(n_points: int = 6) -> pl.DataFrame:
@@ -192,6 +192,35 @@ def test_fits_memory_metrics_by_default() -> None:
     assert ("peak_traced_mb", "n_assets") in fit_keys
     result_fit = next(f for f in fits if f.metric == "result_mb" and f.scaling_dim == "n_assets")
     assert result_fit.log_log_slope == pytest.approx(1.0, abs=0.05)
+
+
+def _fit(stage: str, metric: str, dim: str, r_squared: float) -> ScalingFit:
+    return ScalingFit(
+        run_id="test",
+        stage=stage,
+        metric=metric,
+        scaling_dim=dim,
+        log_log_slope=1.0,
+        intercept=0.0,
+        r_squared=r_squared,
+        n_points=4,
+    )
+
+
+def test_stage_metric_r_squared_takes_max_across_dims() -> None:
+    """Per (stage, metric) confidence is the best r² across scaling dims."""
+    fits = [
+        _fit("etl.batch", "elapsed_s", "n_assets", 0.40),
+        _fit("etl.batch", "elapsed_s", "n_dates", 0.95),
+        _fit("etl.batch", "result_mb", "n_assets", 0.10),
+    ]
+    conf = stage_metric_r_squared(fits)
+    assert conf[("etl.batch", "elapsed_s")] == pytest.approx(0.95)
+    assert conf[("etl.batch", "result_mb")] == pytest.approx(0.10)
+
+
+def test_stage_metric_r_squared_empty() -> None:
+    assert stage_metric_r_squared([]) == {}
 
 
 def test_confounder_control_isolates_each_axis() -> None:

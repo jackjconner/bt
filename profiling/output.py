@@ -111,6 +111,10 @@ def write_json(
         "regression": (
             {
                 "passed": regression_report.passed,
+                "scaling_fit_confidence_ok": regression_report.scaling_fit_confidence_ok,
+                "excluded_low_confidence": [
+                    [stage, metric] for stage, metric in regression_report.excluded_low_confidence
+                ],
                 "violations": [
                     {
                         "stage": v.stage,

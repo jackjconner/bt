@@ -12,7 +12,7 @@ from .memory import MemSnapshot, frames_size_mb, obj_size_mb, rss_mb, snapshot
 from .output import write_json, write_measurements_parquet
 from .regression import RegressionReport, RegressionViolation, check_regressions
 from .report import ScalingResult, StageProfile, collect_stage, print_report
-from .scaling import ScalingFit, fit_scaling, fits_to_dataframe
+from .scaling import ScalingFit, fit_scaling, fits_to_dataframe, stage_metric_r_squared
 from .storage import read_measurements, read_runs, write_run
 from .timer import StageTimer, TimingResult
 from .trials import TrialMeasurement, TrialResult, TrialStats, run_trials
@@ -56,6 +56,7 @@ __all__ = [
     "rss_mb",
     "run_trials",
     "snapshot",
+    "stage_metric_r_squared",
     "write_artifacts",
     # output (feature 7)
     "write_json",
