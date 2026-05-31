@@ -37,7 +37,7 @@ intact proof-of-concept path, and an **additive** production path beside it
 | **portfolio** | construction — factor risk model (`Σ = B·F·Bᵀ + D`), Ledoit-Wolf covariance, constrained mean-variance optimizer, tracking error, VaR/CVaR |
 | **backtest** | simulation — transaction costs, square-root slippage, execution lag, universe masking, corporate actions, share-level accounting, constraints |
 | **analysis** | performance & risk analytics from a `BacktestResult` — CAGR/Sortino/Calmar, benchmark-relative metrics, turnover, attribution, rolling/periodic tables |
-| **profiling** | measurement — repeated-trial percentiles, tracemalloc peak, parquet persistence, regression detection vs baselines, log-log scaling-curve fitting |
+| **profiling** | measurement — repeated-trial percentiles, tracemalloc peak, parquet persistence, regression detection vs baselines, log-log scaling-curve fitting, within-stage flame graphs (pyinstrument CPU / memray memory) indexed in parquet |
 
 ## Run it
 
