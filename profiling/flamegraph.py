@@ -51,13 +51,28 @@ import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TypeVar
+from typing import TYPE_CHECKING, TypedDict, TypeVar
 
 import polars as pl
 
 from .storage import _upsert_parquet
 
+if TYPE_CHECKING:
+    from pyinstrument import Profiler
+
 T = TypeVar("T")
+
+
+class _Identity(TypedDict):
+    """Index fields shared by every artifact from one capture call."""
+
+    profiles_dir: Path
+    run_id: str
+    param_point_id: int
+    stage: str
+    on_regression: bool
+    git_sha: str
+
 
 _INDEX_FILENAME = "profile_artifacts.parquet"
 
@@ -125,6 +140,86 @@ def _artifact_for(
     )
 
 
+def _import_memray():
+    """Import memray, raising a clear error (not ImportError) if it is absent."""
+    try:
+        import memray
+    except ImportError as e:
+        raise RuntimeError("memray not installed — run `uv add memray` to enable it") from e
+    return memray
+
+
+def _run_dir(profiles_dir: Path, run_id: str) -> Path:
+    run_dir = profiles_dir / run_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+    return run_dir
+
+
+def _mem_bin_path(run_dir: Path, stage: str, param_point_id: int) -> Path:
+    """Path for the memray .bin, removed first since memray won't overwrite."""
+    bin_path = run_dir / f"{_slug(stage)}.{param_point_id}.mem.memray.bin"
+    if bin_path.exists():
+        bin_path.unlink()
+    return bin_path
+
+
+def _write_cpu_outputs(prof: Profiler, run_dir: Path, stage: str, pp: int) -> tuple[Path, Path]:
+    """Render a stopped pyinstrument Profiler to (speedscope.json.gz, calltree.txt).
+
+    Speedscope JSON is compact and renders to a flame graph; gzip it since the
+    frame table is repetitive.  The text call tree stays plain for grepping.
+    """
+    from pyinstrument.renderers import SpeedscopeRenderer
+
+    stem = f"{_slug(stage)}.{pp}.cpu"
+    speedscope_path = run_dir / f"{stem}.speedscope.json.gz"
+    calltree_path = run_dir / f"{stem}.calltree.txt"
+    with gzip.open(speedscope_path, "wt", encoding="utf-8") as f:
+        f.write(prof.output(SpeedscopeRenderer()))
+    calltree_path.write_text(prof.output_text(unicode=True, color=False))
+    return speedscope_path, calltree_path
+
+
+def _write_mem_summary(bin_path: Path, run_dir: Path, stage: str, pp: int) -> Path:
+    """Render ``memray summary`` for a written .bin to a .summary.txt; return it.
+
+    The top-allocators table is captured to a file so the readout survives
+    without re-running the workload or needing memray to read the binary.
+    """
+    summary_path = run_dir / f"{_slug(stage)}.{pp}.mem.summary.txt"
+    summary = subprocess.run(
+        ["memray", "summary", str(bin_path)],
+        capture_output=True,
+        text=True,
+    )
+    if summary.returncode != 0:
+        raise RuntimeError(f"memray summary exited {summary.returncode}: {summary.stderr.strip()}")
+    summary_path.write_text(summary.stdout)
+    return summary_path
+
+
+def _cpu_artifacts(
+    speedscope_path: Path, calltree_path: Path, identity: _Identity
+) -> list[ProfileArtifact]:
+    return [
+        _artifact_for(
+            speedscope_path, profiler="pyinstrument", kind="cpu", fmt="speedscope", **identity
+        ),
+        _artifact_for(
+            calltree_path, profiler="pyinstrument", kind="cpu", fmt="calltree", **identity
+        ),
+    ]
+
+
+def _memory_artifacts(
+    bin_path: Path, summary_path: Path, identity: _Identity
+) -> list[ProfileArtifact]:
+    return [
+        _artifact_for(bin_path, profiler="memray", kind="memory", fmt="memray-bin", **identity),
+        _artifact_for(summary_path, profiler="memray", kind="memory", fmt="summary", **identity),
+    ]
+
+
 def capture_cpu[T](
     stage: str,
     fn: Callable[[], T],
@@ -143,7 +238,8 @@ def capture_cpu[T](
     (Polars' Rust, NumPy's C) is attributed to the Python call site that entered
     it — you see *which operation* is hot, not the breakdown inside the native
     call.  For native allocation frames on the memory side, see
-    ``capture_memory``.
+    ``capture_memory``; to capture both in a single ``fn`` execution, see
+    ``capture_both``.
 
     Two artifacts:
       - ``.cpu.speedscope.json.gz`` — a flame graph; open it at speedscope.app.
@@ -165,14 +261,8 @@ def capture_cpu[T](
         ``(fn's return value, [flame-graph artifact, call-tree artifact])``.
     """
     from pyinstrument import Profiler
-    from pyinstrument.renderers import SpeedscopeRenderer
 
-    run_dir = profiles_dir / run_id
-    run_dir.mkdir(parents=True, exist_ok=True)
-    stem = f"{_slug(stage)}.{param_point_id}.cpu"
-    speedscope_path = run_dir / f"{stem}.speedscope.json.gz"
-    calltree_path = run_dir / f"{stem}.calltree.txt"
-
+    run_dir = _run_dir(profiles_dir, run_id)
     prof = Profiler(interval=interval_s, async_mode="disabled")
     prof.start()
     try:
@@ -180,26 +270,16 @@ def capture_cpu[T](
     finally:
         prof.stop()
 
-    # Speedscope JSON is compact and renders to a flame graph; gzip it since the
-    # frame table is repetitive.  The text call tree stays plain for grepping.
-    with gzip.open(speedscope_path, "wt", encoding="utf-8") as f:
-        f.write(prof.output(SpeedscopeRenderer()))
-    calltree_path.write_text(prof.output_text(unicode=True, color=False))
-
-    common = {
+    ss_path, ct_path = _write_cpu_outputs(prof, run_dir, stage, param_point_id)
+    identity: _Identity = {
         "profiles_dir": profiles_dir,
         "run_id": run_id,
         "param_point_id": param_point_id,
         "stage": stage,
-        "profiler": "pyinstrument",
-        "kind": "cpu",
         "on_regression": on_regression,
         "git_sha": git_sha,
     }
-    return result, [
-        _artifact_for(speedscope_path, fmt="speedscope", **common),
-        _artifact_for(calltree_path, fmt="calltree", **common),
-    ]
+    return result, _cpu_artifacts(ss_path, ct_path, identity)
 
 
 def capture_memory[T](
@@ -225,53 +305,92 @@ def capture_memory[T](
         ``memray summary`` so an agent can read where the memory went without
         having memray installed or parsing the binary.
 
+    To capture CPU and memory in a single ``fn`` execution, see ``capture_both``.
+
     Returns:
         ``(fn's return value, [bin artifact, summary artifact])``.
 
     Raises:
         RuntimeError: memray is not installed, or summary rendering failed.
     """
-    try:
-        import memray
-    except ImportError as e:
-        raise RuntimeError("memray not installed — run `uv add memray` to enable it") from e
+    memray = _import_memray()
 
-    run_dir = profiles_dir / run_id
-    run_dir.mkdir(parents=True, exist_ok=True)
-    bin_path = run_dir / f"{_slug(stage)}.{param_point_id}.mem.memray.bin"
-    summary_path = run_dir / f"{_slug(stage)}.{param_point_id}.mem.summary.txt"
-    # memray refuses to overwrite an existing destination.
-    if bin_path.exists():
-        bin_path.unlink()
-
+    run_dir = _run_dir(profiles_dir, run_id)
+    bin_path = _mem_bin_path(run_dir, stage, param_point_id)
     with memray.Tracker(bin_path, native_traces=native_traces):
         result = fn()
 
-    # `memray summary` writes a top-allocators table to stdout; capture it so the
-    # readout survives without re-running the workload.
-    summary = subprocess.run(
-        ["memray", "summary", str(bin_path)],
-        capture_output=True,
-        text=True,
-    )
-    if summary.returncode != 0:
-        raise RuntimeError(f"memray summary exited {summary.returncode}: {summary.stderr.strip()}")
-    summary_path.write_text(summary.stdout)
-
-    common = {
+    summary_path = _write_mem_summary(bin_path, run_dir, stage, param_point_id)
+    identity: _Identity = {
         "profiles_dir": profiles_dir,
         "run_id": run_id,
         "param_point_id": param_point_id,
         "stage": stage,
-        "profiler": "memray",
-        "kind": "memory",
         "on_regression": on_regression,
         "git_sha": git_sha,
     }
-    return result, [
-        _artifact_for(bin_path, fmt="memray-bin", **common),
-        _artifact_for(summary_path, fmt="summary", **common),
-    ]
+    return result, _memory_artifacts(bin_path, summary_path, identity)
+
+
+def capture_both[T](
+    stage: str,
+    fn: Callable[[], T],
+    *,
+    profiles_dir: Path,
+    run_id: str,
+    param_point_id: int,
+    git_sha: str,
+    on_regression: bool = False,
+    interval_s: float = 0.001,
+    native_traces: bool = True,
+) -> tuple[T, list[ProfileArtifact]]:
+    """Capture CPU *and* memory from a single ``fn`` execution — all 4 artifacts.
+
+    pyinstrument (stack sampling) and memray (allocation tracking) use orthogonal
+    mechanisms and coexist in one process — memray's one-tracker limit only
+    forbids a *second memray* tracker.  Running both at once halves the cost
+    versus separate ``capture_cpu`` + ``capture_memory`` passes, which matters
+    when ``fn`` is a whole pipeline.
+
+    The trade-off is mutual contamination: the CPU flame graph includes memray's
+    per-allocation tracking overhead (visible in native frames), and the memory
+    capture includes pyinstrument's small sampler allocations.  When you need a
+    clean single-profiler read, call ``capture_cpu`` or ``capture_memory``
+    directly.
+
+    Returns:
+        ``(fn's return value, [speedscope, calltree, memray-bin, summary])``.
+
+    Raises:
+        RuntimeError: memray is not installed, or summary rendering failed.
+    """
+    from pyinstrument import Profiler
+
+    memray = _import_memray()
+
+    run_dir = _run_dir(profiles_dir, run_id)
+    bin_path = _mem_bin_path(run_dir, stage, param_point_id)
+    prof = Profiler(interval=interval_s, async_mode="disabled")
+    with memray.Tracker(bin_path, native_traces=native_traces):
+        prof.start()
+        try:
+            result = fn()
+        finally:
+            prof.stop()
+
+    ss_path, ct_path = _write_cpu_outputs(prof, run_dir, stage, param_point_id)
+    summary_path = _write_mem_summary(bin_path, run_dir, stage, param_point_id)
+    identity: _Identity = {
+        "profiles_dir": profiles_dir,
+        "run_id": run_id,
+        "param_point_id": param_point_id,
+        "stage": stage,
+        "on_regression": on_regression,
+        "git_sha": git_sha,
+    }
+    return result, _cpu_artifacts(ss_path, ct_path, identity) + _memory_artifacts(
+        bin_path, summary_path, identity
+    )
 
 
 def _index_path(profiles_dir: Path) -> Path:

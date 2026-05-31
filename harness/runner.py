@@ -32,9 +32,8 @@ from profiling import (
     RegressionReport,
     ScalingFit,
     TrialResult,
-    capture_cpu,
+    capture_both,
     capture_environment,
-    capture_memory,
     check_regressions,
     fit_scaling,
     prune_profiles,
@@ -119,9 +118,10 @@ def run_harness(
 
             # Flame graphs run as a SEPARATE single-shot pass (not wrapping the
             # timed loop above), so sampling overhead never contaminates the
-            # scalar percentiles.  Opt-in: only when a profiles_dir is supplied.
+            # scalar percentiles.  capture_both profiles CPU + memory in one
+            # execution.  Opt-in: only when a profiles_dir is supplied.
             if profiles_dir is not None:
-                _, cpu_arts = capture_cpu(
+                _, comp_arts = capture_both(
                     comp.name,
                     lambda c=comp, i=inputs: c.run(i),
                     profiles_dir=profiles_dir,
@@ -129,16 +129,7 @@ def run_harness(
                     param_point_id=pp,
                     git_sha=env.git_sha,
                 )
-                _, mem_arts = capture_memory(
-                    comp.name,
-                    lambda c=comp, i=inputs: c.run(i),
-                    profiles_dir=profiles_dir,
-                    run_id=profiles_run_id,
-                    param_point_id=pp,
-                    git_sha=env.git_sha,
-                )
-                artifacts.extend(cpu_arts)
-                artifacts.extend(mem_arts)
+                artifacts.extend(comp_arts)
 
     write_run(store_dir, env, trial_results)
     measurements = read_measurements(store_dir)

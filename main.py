@@ -23,9 +23,8 @@ from portfolio import (
 )
 from profiling import (
     ScalingResult,
-    capture_cpu,
+    capture_both,
     capture_environment,
-    capture_memory,
     collect_stage,
     print_report,
     prune_profiles,
@@ -145,16 +144,15 @@ HARNESS_GRID = [
 def _profile_full_pipeline(pipe_dir: Path, profiles_dir: Path) -> None:
     """Capture the whole production pipeline as one flame graph (CPU + memory).
 
-    Runs the pipeline once under each profiler (pyinstrument and memray each wrap
-    a single execution) — acceptable for this opt-in manual entry point.  The
-    whole-pipeline flame graph already contains every component's subtree, so a
-    single capture decomposes the full run.  Uses a timestamped run_id so
-    prune_profiles can retain the latest N.
+    A single capture_both execution profiles CPU and memory together.  The
+    whole-pipeline flame graph already contains every component's subtree, so one
+    capture decomposes the full run.  Uses a timestamped run_id so prune_profiles
+    can retain the latest N.
     """
     ts = datetime.datetime.now()
     run_id = f"full_pipeline-{ts:%Y%m%dT%H%M%S}-{ts.microsecond:06d}"
     git_sha = capture_environment("full_pipeline").git_sha
-    summary, cpu_arts = capture_cpu(
+    summary, artifacts = capture_both(
         "full_pipeline",
         lambda: run_production_pipeline(PIPELINE_SPEC, pipe_dir),
         profiles_dir=profiles_dir,
@@ -162,15 +160,7 @@ def _profile_full_pipeline(pipe_dir: Path, profiles_dir: Path) -> None:
         param_point_id=0,
         git_sha=git_sha,
     )
-    _, mem_arts = capture_memory(
-        "full_pipeline",
-        lambda: run_production_pipeline(PIPELINE_SPEC, pipe_dir),
-        profiles_dir=profiles_dir,
-        run_id=run_id,
-        param_point_id=0,
-        git_sha=git_sha,
-    )
-    write_artifacts(profiles_dir, cpu_arts + mem_arts)
+    write_artifacts(profiles_dir, artifacts)
     prune_profiles(profiles_dir, keep_last_n=5)
     print_pipeline_summary(summary)
 
