@@ -6,6 +6,7 @@ from .combine import (
     incremental_ic,
     zscore_blend,
 )
+from .correlation import SignalCorrelationResult, signal_pair_correlation
 from .coverage import apply_min_coverage, pairwise_mask
 from .horizon import HorizonCurve, HorizonPoint, ic_horizon_curve
 from .ic import (
@@ -49,6 +50,7 @@ __all__ = [
     "NeutralizationResult",
     "QuantileResult",
     "RegimeConditionalICResult",
+    "SignalCorrelationResult",
     "SignalEvaluator",
     "TurnoverResult",
     "apply_min_coverage",
@@ -74,6 +76,7 @@ __all__ = [
     "rolling_ic",
     "rolling_ic_ir",
     "signal_autocorr",
+    "signal_pair_correlation",
     "spearman_ic_lazy",
     "tstat_to_pvalue",
     "turnover_score",
