@@ -23,11 +23,25 @@ don't work around it.
 
 ## Your brief
 
-The orchestrator hands you: one sentence of goal, the exact files
-(`portfolio/optimizer.py`, its `_protocol.py`, its tests), what's been ruled
-out, and the declared metric + eval tolerance for the round. Prefer the smallest
-change that wins the gate over a sweeping rewrite — small diffs review and revert
-cleanly.
+The orchestrator hands you: the **round type**, one sentence of goal, the exact
+files (`portfolio/optimizer.py`, its `_protocol.py`, its tests), what's been
+ruled out, and the declared metric + eval tolerance. Your mandate — and what
+"done" looks like — depends on the type:
+
+- **exploit** — the smallest change that wins the metric gate; small diffs review
+  and revert cleanly. Behavior holds the golden within tolerance.
+- **refactor** — split a large/tangled function, add unit tests, **change no
+  behavior**: the golden must come back **byte-identical** (`evalgate
+  --tolerance 0`). You win on structure (length/complexity down, coverage up),
+  not speed — profiling need only show *no regression*.
+- **feature** — add a new capability **additively, behind a flag/default**: a new
+  function, a new `_protocol.py` method with a default, or a new
+  `PipelineSummary` field. Existing numbers hold; any new fields are gated by
+  `evalgate --allow-new-fields`. Ship it with tests that exercise the new path.
+- **explore** — **you are the bold rewrite.** Maximize divergence from the
+  incumbent (a different engine, algorithm, or data layout); a minimal diff is a
+  *failed* explore. You are one of K siblings on the same target — a judge ranks
+  you against them, so take the approach the others won't.
 
 ## The gates (your PR must pass all of them — run and quote each)
 
@@ -36,8 +50,8 @@ cleanly.
 | **lint** | `uv run ruff check` + `ruff format --check` | clean; warnings are errors. Enforced on *every* commit by `scripts/committer`. |
 | **types** | `uv run ty check` | clean; `error-on-warning`. No `# type: ignore` / suppression — fix or widen the annotation. Enforced per commit. |
 | **correctness / regression** | `uv run pytest -q` (unit + `tests/integration/`) | still green — same count, no new failures. The integration suite imports across components, so a broken contract fails *here*. |
-| **profiling** | `harness/run_harness` via `uv run main.py`; `check_regressions` vs the ratcheted baseline | the declared target metric *improved*, no other stage regressed past threshold. |
-| **evaluation** | `pipeline.py::run_production_pipeline` → `PipelineSummary` vs the round's **golden** | eval numbers (signal IC, walk-forward IC/R², Sharpe, cost drag) equal within the declared tolerance, or better. |
+| **profiling** | `harness/run_harness` via `uv run main.py`; `check_regressions` vs the ratcheted baseline | per your round type: **improved** (exploit), **no regression** (refactor / feature), or **improved-or-justified-tie** (explore). No other stage regresses past threshold. |
+| **evaluation** | `python -m evalgate` → `PipelineSummary` vs the round's **golden** | per type: holds within tolerance (exploit / explore), **byte-identical** `--tolerance 0` (refactor), or holds + **new fields** `--allow-new-fields` (feature). A genuine accuracy improvement is the one case a number *should* move — justify it. |
 
 Lint and types are *continuous* — `scripts/committer` runs them on every atomic
 commit, so your PR is lint/type-clean by construction. The evaluation gate is the
@@ -88,7 +102,9 @@ DECISIONS.md, additive-API discipline):
   rejected. Additive only.
 - A PR that edits outside your component's lane.
 - Crossing a component boundary instead of posting to `API_REQUESTS.md`.
-- A sweeping rewrite when a small diff would win the gate.
+- A sweeping rewrite on an `exploit`/`refactor` round when a small diff would win
+  — but on an `explore` round the opposite is the anti-pattern: a timid diff
+  fails the round, because divergence is the whole point.
 - Declaring done without quoting all the gates
   ([[verification-before-completion]]).
 

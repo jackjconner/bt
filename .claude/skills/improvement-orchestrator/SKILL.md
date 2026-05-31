@@ -15,19 +15,71 @@ carry memory across rounds. One round per invocation; re-invoke for the next.
 
 ## When to apply
 
-When the goal is "improve component X" (the harness flagged a hotspot, an
-analytic is wrong, a path is slow) and you are the driver coordinating workers,
-not the worker doing the change. If the contract *must* break, that's a
-[[design-before-architecture-changes]] talk with Jack, not this loop.
+When you are driving a round of making the system better and coordinating
+workers (not doing the change yourself). "Better" is one of four **round types**
+— a perf win (`exploit`), a structural cleanup (`refactor`), a new capability
+(`feature`), or a bold rewrite (`explore`) — see Round types below. If the
+contract *must* break, that's a [[design-before-architecture-changes]] talk with
+Jack, not this loop.
+
+## Round types
+
+A round is one of four **types**; you pick it (step 1) and the gates apply per
+type (the adjudication bar below is type-aware). `exploit` is the original loop,
+unchanged.
+
+| type | target source | worker mandate | profiling gate | evaluation gate | extra |
+|---|---|---|---|---|---|
+| **exploit** | harness hotspot (`scaling_fits`) | smallest diff that wins | metric **improved** | golden holds, or justified accuracy move | — |
+| **refactor** | a large/tangled fn or thin-test area | split it up, add unit tests, **no behavior change** | **no regression** (need not improve) | golden **byte-identical** (`--tolerance 0`) | complexity/length down, tests added |
+| **feature** | top of `FEATURE_BACKLOG.md` | **additive** capability behind a flag + tests | no regression on existing stages | existing fields **hold**; new fields ok (`--allow-new-fields`) | capability works under test |
+| **explore** | a bold-rewrite target | **be** the sweeping rewrite — divergence is the point | improved, **or** a justified tie | golden holds, or justified | K-way tournament → judge → hybrid reward |
+
+**Explore cadence.** Count rounds since the last `type: explore` in
+`IMPROVEMENTS.md`; if ≥ 4 non-explore rounds have passed, the next round is
+`explore`. Otherwise pick exploit / refactor / feature from the live signal +
+backlog.
+
+**Hybrid explore reward.** A strict gate-win merges. A *tie* that is structurally
+clearly better / opens flagged headroom **may** merge (your call, justified in the
+writeup). Pure losers are **discarded** — log their learning to `SPIKES.md` and
+record the round `spiked`.
+
+**The explore tournament (this skill is the source of truth).** Given a target and
+K (3–4) deliberately *divergent* strategy briefs (e.g. lazy-Polars rewrite /
+numpy-core inner / a different algorithm):
+
+1. Fan out K workers, one per strategy, each in its own worktree
+   `git worktree add .worktrees/explore-<slug>-<k> -b explore/<slug>-<k> main`,
+   dispatched in parallel via the **Agent tool** (they run `component-improvement-loop`).
+2. When they return, dispatch a **judge** sub-agent that scores each PR on
+   gate-outcome / magnitude / structural quality / headroom opened / risk, and
+   returns a ranked list.
+3. Apply the hybrid reward to the ranking: merge the winner (or a strong tie),
+   spike the rest. `.claude/workflows/explore-tournament.js` encodes the same
+   flow as a named workflow, but this procedure is authoritative.
 
 ## The round
 
-1. **Propose the target.** Run `uv run main.py` to read the latest `harness/`
-   table + `scaling_fits`; open `API_REQUESTS.md`. Propose the single thing to
-   address and name the **metric it optimizes** + the **eval tolerance** up
-   front. **Dedup against `IMPROVEMENTS.md`:** if the same target was accepted
-   recently the baseline already moved; if rejected, don't re-attempt without a
-   genuinely new idea — pick something else.
+1. **Propose the round — pick a type and a target.** First decide the **type**
+   (see Round types): apply the explore cadence (≥ 4 non-explore rounds since the
+   last `explore` → this is an `explore` round); else choose exploit / refactor /
+   feature from the live signal. Then:
+   - `exploit` — run `uv run main.py`, read the `harness/` table + `scaling_fits`,
+     open `API_REQUESTS.md`; name the single target + the **metric it optimizes**
+     + the **eval tolerance**.
+   - `refactor` — pick a flagged large/tangled function or a thin-test area; the
+     "metric" is structural (length/complexity down, tests added) and the eval
+     gate is golden **byte-identical** (`evalgate --tolerance 0`).
+   - `feature` — run a fan-out **ideation** sub-step: agents score candidate
+     capabilities against `VISION.md` + `PRODUCTION_PLAN.md` tier-2/3 and append
+     `queued` rows to `FEATURE_BACKLOG.md`; build the **top Jack-prioritized**
+     item. The "metric" is the new capability working under test.
+   - `explore` — pick the incumbent to challenge and draft K divergent strategy
+     briefs (see The explore tournament).
+   **Dedup against `IMPROVEMENTS.md`** (and `FEATURE_BACKLOG.md` for features): if
+   the target was accepted recently the baseline already moved; if rejected, don't
+   re-attempt without a genuinely new idea — pick something else.
 2. **Capture the golden.** Run all the gates *now*. Save the `PipelineSummary`
    from `pipeline.py::run_production_pipeline` as the round's **golden**, and
    record the target metric's current value. Nothing is an improvement without a
@@ -40,7 +92,9 @@ not the worker doing the change. If the contract *must* break, that's a
    `component-improvement-loop` skill**. Parallel-vs-serial rule: components
    sharing no `API_REQUESTS` edge this round are independent → dispatch in
    parallel; a consumer waiting on a producer's new field serializes (producer
-   this round, consumer next).
+   this round, consumer next). For an **`explore`** round, dispatch the **K-way
+   tournament** instead (see The explore tournament): K workers on the *same*
+   target with divergent briefs, then a judge — not one worker per component.
 4. **Adjudicate.** Review each PR's writeup against the `pr-writeup.md` sections;
    confirm the worker actually ran and quoted *every* gate. Don't take "passing"
    on faith — the numbers are in the writeup or the gate didn't run.
@@ -51,8 +105,12 @@ not the worker doing the change. If the contract *must* break, that's a
    the next. On any post-merge regression, `git revert` the merge commit.
 6. **Ratchet + record.** After a merge stands: regenerate `stage_baselines` from
    the new harness run (next round's `check_regressions` bar); append the round
-   to `IMPROVEMENTS.md` (target, before→after, PR link, verdict); reconcile
-   `API_REQUESTS.md`.
+   to `IMPROVEMENTS.md` with its **`type:`** (target, before→after, PR link,
+   verdict). For a `feature` round that added `PipelineSummary` fields, re-save the
+   golden (`python -m evalgate --save`) so the new fields become the baseline, and
+   mark the built item `done` in `FEATURE_BACKLOG.md`. For an `explore` round, log
+   the discarded attempts to `SPIKES.md` (verdict `spiked` if nothing merged).
+   Reconcile `API_REQUESTS.md`.
 7. **Dispatch the docs agent.** A dedicated agent — *not* a worker — reconciles
    in-repo docs (`README.md`, `WORKING_NOTES.md`, `PRODUCTION_PLAN.md`, touched
    docstrings, a `DECISIONS.md` entry for an ADR-worthy call) and commits to
@@ -74,11 +132,11 @@ A PR merges only if all gates pass. Lint and types are *continuous*
 (`scripts/committer` runs them on every worker commit), so the live gates you
 adjudicate are correctness, profiling, and evaluation:
 
-| gate | command | the bar |
+| gate | command | the bar (by round type) |
 |---|---|---|
-| **correctness** | `uv run pytest -q` (unit + `tests/integration/`) | still green — same count, no new failures. A broken contract fails in the integration suite. |
-| **profiling** | `uv run main.py` → `check_regressions` vs the ratcheted baseline | the declared target metric *improved*, no other stage regressed past threshold. |
-| **evaluation** | `run_production_pipeline` → `PipelineSummary` diffed vs the **golden** | eval numbers (signal IC, walk-forward IC/R², Sharpe, cost drag) equal within the declared tolerance, or better. |
+| **correctness** | `uv run pytest -q` (unit + `tests/integration/`) | **all types:** still green — same count, no new failures (a broken contract fails in the integration suite). refactor/feature additionally *add* tests. |
+| **profiling** | `uv run main.py` → `check_regressions` vs the ratcheted baseline | **exploit:** target metric *improved*. **refactor / feature:** *no regression* past threshold (need not improve). **explore:** *improved, or a justified tie*. |
+| **evaluation** | `python -m evalgate` → `PipelineSummary` diffed vs the **golden** | **exploit / explore:** golden holds within tolerance, or a justified accuracy move. **refactor:** **byte-identical** (`evalgate --tolerance 0`). **feature:** existing fields hold + **new fields allowed** (`evalgate --allow-new-fields`); re-save the golden post-merge to absorb them. |
 
 Evaluation is the subtle one: a speedup that moves the Sharpe is a correctness
 regression wearing a profiling win's clothes — the golden diff catches it. A
@@ -98,13 +156,20 @@ exists because unit tests pass while numbers silently move.
 - Skipping the `IMPROVEMENTS.md` dedup, or re-attempting a logged rejection.
 - Banking a profiling win that moved the eval golden without a correctness
   justification — a silent regression.
-- Forcing a win when no PR passed all the gates.
+- Treating a *moved existing* golden field as additive growth on a `feature`
+  round — `--allow-new-fields` passes only when existing fields hold; a moved
+  number still needs the accuracy justification.
+- Forcing a win when no PR passed its type's gate (an `explore` round with no
+  winner is `spiked`, not forced).
 - Accepting a writeup that doesn't quote the gates
   ([[verification-before-completion]]).
 
 ## Exit condition
 
-The round's target improved on the profiling gate, correctness and evaluation
-are green on the *post-merge* tree, the baseline is ratcheted, and the round is
-recorded in `IMPROVEMENTS.md`. If no PR passed all the gates, record the
-rejection and stop — don't force a win.
+The round met **its type's acceptance bar** on the *post-merge* tree (exploit:
+metric improved; refactor: golden byte-identical + cleaner; feature: capability
+under test + golden holds or grows additively; explore: a merged winner, or every
+attempt `spiked`), correctness is green, the baseline is ratcheted, and the round
+— **with its `type:`** — is recorded in `IMPROVEMENTS.md` (explore losers in
+`SPIKES.md`). If no PR passed its type's gate, record the rejection and stop —
+don't force a win.
