@@ -1,4 +1,6 @@
 from ._protocol import FinancialModel
+from .boosting import GradientBoostConfig, GradientBoostModel
+from .compare import ModelComparison, compare_models
 from .cross_val import CVConfig, CVResult, cv_loop
 from .leakage import CheckResult, LeakageReport, audit_leakage
 from .models_zoo import ElasticNetConfig, ElasticNetModel, LassoConfig, LassoModel
@@ -35,10 +37,13 @@ __all__ = [
     "FinancialModel",
     "FoldResult",
     "FoldScaler",
+    "GradientBoostConfig",
+    "GradientBoostModel",
     "LassoConfig",
     "LassoModel",
     "LeakageReport",
     "ModelArtifact",
+    "ModelComparison",
     "ModelConfig",
     "ModelResult",
     "PanelArrays",
@@ -51,6 +56,7 @@ __all__ = [
     "artifact_from_fold",
     "audit_leakage",
     "build_panel",
+    "compare_models",
     "cv_loop",
     "date_ordinals",
     "held_out_r2",
