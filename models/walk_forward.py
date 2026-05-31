@@ -243,6 +243,148 @@ class WFResult:
 
 
 # --------------------------------------------------------------------------- #
+# Per-fold helpers (private)
+# --------------------------------------------------------------------------- #
+
+
+def _scale_fold(
+    X_tr: np.ndarray,
+    X_te: np.ndarray,
+    scale_features: bool,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Optionally apply per-fold StandardScaler fitted on train data only.
+
+    When ``scale_features`` is False the arrays are returned unchanged.
+    When True a fresh ``FoldScaler`` is fitted on ``X_tr`` and both ``X_tr``
+    and ``X_te`` are standardised using the train-fold statistics, preventing
+    test-distribution leakage into the scaling parameters.
+    """
+    if not scale_features:
+        return X_tr, X_te
+    scaler = FoldScaler()
+    X_tr_s = scaler.fit_transform(X_tr)
+    X_te_s = scaler.transform(X_te)
+    return X_tr_s, X_te_s
+
+
+def _fit_fold(
+    model_factory,
+    X_tr: np.ndarray,
+    y_tr: np.ndarray,
+    w_tr: np.ndarray | None,
+    chosen_alpha: float,
+) -> tuple[Any, Any]:
+    """Fit the model on the full train fold with the chosen alpha.
+
+    Returns ``(fitted_model, fit_result)`` so the caller can call
+    ``fitted_model.predict`` without re-fitting.
+
+    Tries to forward ``sample_weight`` if ``w_tr`` is not None; falls back to
+    unweighted fit when the model's ``fit`` does not accept that keyword (some
+    sklearn estimators do not).
+    """
+    model = model_factory(chosen_alpha)
+    if w_tr is not None:
+        try:
+            fit_result = model.fit(X_tr, y_tr, sample_weight=w_tr)
+            return model, fit_result
+        except TypeError:
+            pass
+    fit_result = model.fit(X_tr, y_tr)
+    return model, fit_result
+
+
+def _score_fold(
+    y_te: np.ndarray,
+    preds: np.ndarray,
+    grp_te: np.ndarray,
+) -> tuple[float, float, np.ndarray]:
+    """Compute held-out R², mean IC, and per-date IC values for a test fold.
+
+    Returns ``(test_r2, test_ic, ic_values)`` where ``ic_values`` is the
+    per-date Spearman ρ array used to accumulate the aggregate IC stats.
+    """
+    test_r2 = held_out_r2(y_te, preds)
+    test_ic = rank_ic_score(y_te, preds, grp_te)
+    _, ic_values = rank_ic_series(y_te, preds, grp_te)
+    return test_r2, test_ic, ic_values
+
+
+def _build_fold_panel_df(
+    fold_dates: np.ndarray,
+    fold_ids: np.ndarray,
+    preds: np.ndarray,
+    fold_idx: int,
+) -> pl.DataFrame:
+    """Build the typed ``pl.DataFrame`` for one fold's OOS predictions.
+
+    Schema: ``(date: Date, id: Int64, prediction: Float64, fold: Int32)``.
+    This row block is later concatenated with other folds to form
+    ``WFResult.predictions_panel``.
+    """
+    return pl.DataFrame(
+        {
+            "date": list(fold_dates),
+            "id": fold_ids.tolist(),
+            "prediction": preds.tolist(),
+            "fold": fold_idx,
+        }
+    ).with_columns(
+        pl.col("date").cast(pl.Date),
+        pl.col("id").cast(pl.Int64),
+        pl.col("prediction").cast(pl.Float64),
+        pl.col("fold").cast(pl.Int32),
+    )
+
+
+def _assemble_wf_result(
+    fold_results: list[FoldResult],
+    all_preds_list: list[np.ndarray],
+    all_true_list: list[np.ndarray],
+    all_groups_list: list[np.ndarray],
+    all_dates_list: list[np.ndarray],
+    all_ids_list: list[np.ndarray],
+    panel_rows: list[pl.DataFrame],
+) -> WFResult:
+    """Concatenate per-fold accumulators into the final ``WFResult``.
+
+    Handles the empty-fold edge case for all array fields and for
+    ``predictions_panel`` (returns ``None`` when no folds completed).
+    """
+    all_preds = np.concatenate(all_preds_list) if all_preds_list else np.array([])
+    all_true = np.concatenate(all_true_list) if all_true_list else np.array([])
+    all_groups = (
+        np.concatenate(all_groups_list) if all_groups_list else np.array([], dtype=np.int64)
+    )
+    all_dates = np.concatenate(all_dates_list) if all_dates_list else np.array([], dtype=object)
+    all_ids = np.concatenate(all_ids_list) if all_ids_list else np.array([], dtype=np.int64)
+
+    predictions_panel: pl.DataFrame | None = (
+        pl.concat(panel_rows).sort(["date", "id"]) if panel_rows else None
+    )
+
+    r2_arr = np.array([f.test_r2 for f in fold_results])
+    all_ic_values = (
+        np.concatenate([f.ic_values for f in fold_results]) if fold_results else np.array([])
+    )
+    stats = ic_stats(all_ic_values)
+
+    return WFResult(
+        fold_results=fold_results,
+        mean_r2=float(r2_arr.mean()) if len(r2_arr) > 0 else 0.0,
+        std_r2=float(r2_arr.std()) if len(r2_arr) > 0 else 0.0,
+        mean_ic=stats["mean_ic"],
+        ic_ir=stats["ic_ir"],
+        all_preds=all_preds,
+        all_true=all_true,
+        all_groups=all_groups,
+        all_dates=all_dates,
+        all_ids=all_ids,
+        predictions_panel=predictions_panel,
+    )
+
+
+# --------------------------------------------------------------------------- #
 # Main entry point
 # --------------------------------------------------------------------------- #
 
@@ -287,7 +429,6 @@ def walk_forward_cv(
     all_groups_list: list[np.ndarray] = []
     all_dates_list: list[np.ndarray] = []
     all_ids_list: list[np.ndarray] = []
-    # Accumulate per-fold DataFrames for predictions_panel.
     panel_rows: list[pl.DataFrame] = []
     fold_idx = 0
 
@@ -299,38 +440,17 @@ def walk_forward_cv(
         X_te, y_te = X[test_idx], y[test_idx]
         w_tr = weights[train_idx] if config.use_sample_weights else None
 
-        # per-fold feature standardization: fit on train only
-        if config.scale_features:
-            scaler = FoldScaler()
-            X_tr = scaler.fit_transform(X_tr)
-            X_te = scaler.transform(X_te)
+        X_tr, X_te = _scale_fold(X_tr, X_te, config.scale_features)
 
-        # inner alpha search
         chosen_alpha = _best_alpha(
-            X_tr,
-            y_tr,
-            config.alpha_grid,
-            model_factory,
-            w_tr,
-            config.inner_val_frac,
+            X_tr, y_tr, config.alpha_grid, model_factory, w_tr, config.inner_val_frac
         )
 
-        # final fit on full train fold with the best alpha
-        model = model_factory(chosen_alpha)
-        kw: dict[str, Any] = {}
-        if config.use_sample_weights and w_tr is not None:
-            kw["sample_weight"] = w_tr
-        try:
-            fit_result = model.fit(X_tr, y_tr, **kw)
-        except TypeError:
-            # model.fit doesn't accept sample_weight
-            fit_result = model.fit(X_tr, y_tr)
-
+        model, fit_result = _fit_fold(model_factory, X_tr, y_tr, w_tr, chosen_alpha)
         preds = model.predict(X_te)
-        test_r2 = held_out_r2(y_te, preds)
+
         grp_te = groups[test_idx]
-        test_ic = rank_ic_score(y_te, preds, grp_te)
-        _, ic_values = rank_ic_series(y_te, preds, grp_te)
+        test_r2, test_ic, ic_values = _score_fold(y_te, preds, grp_te)
 
         fold_results.append(
             FoldResult(
@@ -350,53 +470,15 @@ def walk_forward_cv(
         fold_ids = ids[test_idx]
         all_dates_list.append(fold_dates)
         all_ids_list.append(fold_ids)
-
-        # Build a keyed DataFrame for this fold's OOS predictions.
-        panel_rows.append(
-            pl.DataFrame(
-                {
-                    "date": list(fold_dates),
-                    "id": fold_ids.tolist(),
-                    "prediction": preds.tolist(),
-                    "fold": fold_idx,
-                }
-            ).with_columns(
-                pl.col("date").cast(pl.Date),
-                pl.col("id").cast(pl.Int64),
-                pl.col("prediction").cast(pl.Float64),
-                pl.col("fold").cast(pl.Int32),
-            )
-        )
+        panel_rows.append(_build_fold_panel_df(fold_dates, fold_ids, preds, fold_idx))
         fold_idx += 1
 
-    all_preds = np.concatenate(all_preds_list) if all_preds_list else np.array([])
-    all_true = np.concatenate(all_true_list) if all_true_list else np.array([])
-    all_groups = (
-        np.concatenate(all_groups_list) if all_groups_list else np.array([], dtype=np.int64)
-    )
-    all_dates = np.concatenate(all_dates_list) if all_dates_list else np.array([], dtype=object)
-    all_ids = np.concatenate(all_ids_list) if all_ids_list else np.array([], dtype=np.int64)
-
-    predictions_panel: pl.DataFrame | None = (
-        pl.concat(panel_rows).sort(["date", "id"]) if panel_rows else None
-    )
-
-    r2_arr = np.array([f.test_r2 for f in fold_results])
-    all_ic_values = (
-        np.concatenate([f.ic_values for f in fold_results]) if fold_results else np.array([])
-    )
-    stats = ic_stats(all_ic_values)
-
-    return WFResult(
-        fold_results=fold_results,
-        mean_r2=float(r2_arr.mean()) if len(r2_arr) > 0 else 0.0,
-        std_r2=float(r2_arr.std()) if len(r2_arr) > 0 else 0.0,
-        mean_ic=stats["mean_ic"],
-        ic_ir=stats["ic_ir"],
-        all_preds=all_preds,
-        all_true=all_true,
-        all_groups=all_groups,
-        all_dates=all_dates,
-        all_ids=all_ids,
-        predictions_panel=predictions_panel,
+    return _assemble_wf_result(
+        fold_results,
+        all_preds_list,
+        all_true_list,
+        all_groups_list,
+        all_dates_list,
+        all_ids_list,
+        panel_rows,
     )
