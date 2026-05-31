@@ -5,7 +5,7 @@ from .calendar import align_to_calendar, fill_sessions, sessions_between
 from .loader import DatasetLoader
 from .masked_pivot import to_masked_matrix
 from .pit import as_of_slice, latest_as_of
-from .quality import QualityReport, check
+from .quality import QualityReport, annotate_quality_flags, check
 from .source import date_axis, generate_returns, to_float, to_matrix, write_parquet
 from .stream import StreamLoader
 from .universe import apply_security_master, resolve_universe
@@ -22,6 +22,7 @@ __all__ = [
     "StreamLoader",
     "adjust_prices",
     "align_to_calendar",
+    "annotate_quality_flags",
     "apply_security_master",
     "as_of_slice",
     "check",
