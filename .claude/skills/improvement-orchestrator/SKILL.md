@@ -95,8 +95,12 @@ is the difference between a clean round and a capsized one. See [[workspace-isol
    tool** in its own worktree:
    `git worktree add .worktrees/<component>-<slug> -b improve/<component>-<slug> main`.
    The brief is one sentence of goal + the exact files + what you've
-   ruled out + the hard constraints, and it **points the worker at the
-   `component-improvement-loop` skill**. Parallel-vs-serial rule: components
+   ruled out + the hard constraints + the component's **context pack**
+   (`docs/worker-context/<component>.md` — inject or point to it so the worker
+   skips hand-mapping), and it **points the worker at the
+   `component-improvement-loop` skill** (gates run via the `scripts/gate`
+   runner, which pins to the worktree + redirects temp off tmpfs).
+   Parallel-vs-serial rule: components
    sharing no `API_REQUESTS` edge this round are independent → dispatch in
    parallel; a consumer waiting on a producer's new field serializes (producer
    this round, consumer next). For an **`explore`** round, dispatch the **K-way
@@ -141,9 +145,9 @@ adjudicate are correctness, profiling, and evaluation:
 
 | gate | command | the bar (by round type) |
 |---|---|---|
-| **correctness** | `uv run pytest -q` (unit + `tests/integration/`) | **all types:** still green — same count, no new failures (a broken contract fails in the integration suite). refactor/feature additionally *add* tests. |
-| **profiling** | `uv run main.py` → `check_regressions` vs the ratcheted baseline | **exploit:** target metric *improved*. **refactor / feature:** *no regression* past threshold (need not improve). **explore:** *improved, or a justified tie*. |
-| **evaluation** | `python -m evalgate` → `PipelineSummary` diffed vs the **golden** | **exploit / explore:** golden holds within tolerance, or a justified accuracy move. **refactor:** **byte-identical** (`evalgate --tolerance 0`). **feature:** existing fields hold + **new fields allowed** (`evalgate --allow-new-fields`); re-save the golden post-merge to absorb them. |
+| **correctness** | `scripts/gate test` (unit + `tests/integration/`) | **all types:** still green — same count, no new failures (a broken contract fails in the integration suite). refactor/feature additionally *add* tests. |
+| **profiling** | `scripts/gate bench` → `check_regressions` vs the ratcheted baseline | **exploit:** target metric *improved*. **refactor / feature:** *no regression* past threshold (need not improve). **explore:** *improved, or a justified tie*. |
+| **evaluation** | `scripts/gate eval` → `PipelineSummary` diffed vs the **golden** | **exploit / explore:** golden holds within tolerance, or a justified accuracy move. **refactor:** **byte-identical** (`scripts/gate eval --tolerance 0`). **feature:** existing fields hold + **new fields allowed** (`scripts/gate eval --allow-new-fields`); re-save the golden post-merge to absorb them. |
 
 Evaluation is the subtle one: a speedup that moves the Sharpe is a correctness
 regression wearing a profiling win's clothes — the golden diff catches it. A

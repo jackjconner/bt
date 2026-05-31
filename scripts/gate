@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+# gate — run a component-improvement-loop gate from your worktree, with TMPDIR
+# already redirected off the RAM-backed /tmp and (for the timed bench) the
+# machine bench lock held.
+#
+# This replaces the `cd <worktree> && . scripts/diskguard && <long command>`
+# boilerplate that worker sub-agents otherwise repeat ~30× per round, and pins
+# every gate to the *current* worktree (`git rev-parse --show-toplevel`) so a
+# slipped cwd can't run a gate against the wrong tree.
+#
+#   scripts/gate lint                # ruff check + ruff format --check + ty check
+#   scripts/gate test [paths...]     # pytest (default: full suite)
+#                                    #   e.g. scripts/gate test etl/ tests/integration/
+#   scripts/gate eval [extra...]     # evalgate vs the round golden
+#                                    #   e.g. scripts/gate eval --tolerance 0
+#                                    #        scripts/gate eval --allow-new-fields
+#   scripts/gate bench [args...]     # harness through the bench lock (clean timings)
+#   scripts/gate all <component>     # lint, then test <component>/ + integration, then eval
+#
+# Run it from inside your worktree (the gate operates on whatever tree you're in).
+set -euo pipefail
+
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT"
+
+# Redirect heavy temp off tmpfs (exports TMPDIR; refuses to proceed on tmpfs /
+# low disk). Sourced so the export reaches the uv subprocesses below.
+# shellcheck source=/dev/null
+. "$ROOT/scripts/diskguard" >/dev/null
+
+GOLDEN="$ROOT/.oversight/golden.json"
+
+_sub="${1:-}"
+shift 2>/dev/null || true
+
+case "$_sub" in
+  lint)
+    uv run ruff check
+    uv run ruff format --check
+    uv run ty check
+    ;;
+  test)
+    uv run pytest -q "$@"
+    ;;
+  eval)
+    uv run python -m evalgate --golden "$GOLDEN" --field-tol backtest_p50_s=0.5 "$@"
+    ;;
+  bench)
+    scripts/bench uv run main.py "$@"
+    ;;
+  all)
+    comp="${1:-}"
+    if [ -z "$comp" ]; then
+      echo "gate all: needs a component dir, e.g. scripts/gate all etl" >&2
+      exit 2
+    fi
+    uv run ruff check
+    uv run ruff format --check
+    uv run ty check
+    uv run pytest -q "$comp/" tests/integration/
+    uv run python -m evalgate --golden "$GOLDEN" --field-tol backtest_p50_s=0.5
+    ;;
+  *)
+    echo "usage: scripts/gate {lint|test|eval|bench|all} [args]" >&2
+    exit 2
+    ;;
+esac

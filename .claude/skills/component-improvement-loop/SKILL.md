@@ -25,8 +25,12 @@ don't work around it.
 
 The orchestrator hands you: the **round type**, one sentence of goal, the exact
 files (`portfolio/optimizer.py`, its `_protocol.py`, its tests), what's been
-ruled out, and the declared metric + eval tolerance. Your mandate — and what
-"done" looks like — depends on the type:
+ruled out, and the declared metric + eval tolerance. **Read your component's
+context pack first** — `docs/worker-context/<component>.md` maps the files, the
+public API you must not break, the harness hot path, and what's already been
+optimized, so you orient in one read instead of grepping the component by hand
+(re-verify anything load-bearing against the code — the pack can lag). Your
+mandate — and what "done" looks like — depends on the type:
 
 - **exploit** — the smallest change that wins the metric gate; small diffs review
   and revert cleanly. Behavior holds the golden within tolerance.
@@ -45,20 +49,19 @@ ruled out, and the declared metric + eval tolerance. Your mandate — and what
 
 ## The gates (your PR must pass all of them — run and quote each)
 
-**First: `source scripts/diskguard`.** The profiling and evaluation gates run the
-harness / pipeline, which write GB-scale parquet to `$TMPDIR` — a RAM-backed
-`/tmp` by default. Without redirecting that to disk, concurrent workers fill
-tmpfs, writes fail with `EDQUOT`, and git aborts. diskguard redirects heavy temp
-to disk and sweeps stale temp; run it before any gate.
-
+Run every gate with the **`scripts/gate`** runner. It pins to your worktree,
+redirects heavy temp off the RAM-backed `/tmp` (without that, concurrent workers
+fill tmpfs, writes fail with `EDQUOT`, and git aborts), and holds the bench lock
+for the timed run — so you never source diskguard or memorize an invocation.
 
 | gate | command | the bar |
 |---|---|---|
-| **lint** | `uv run ruff check` + `ruff format --check` | clean; warnings are errors. Enforced on *every* commit by `scripts/committer`. |
-| **types** | `uv run ty check` | clean; `error-on-warning`. No `# type: ignore` / suppression — fix or widen the annotation. Enforced per commit. |
-| **correctness / regression** | `uv run pytest -q` (unit + `tests/integration/`) | still green — same count, no new failures. The integration suite imports across components, so a broken contract fails *here*. |
-| **profiling** | `harness/run_harness` via `uv run main.py`; `check_regressions` vs the ratcheted baseline | per your round type: **improved** (exploit), **no regression** (refactor / feature), or **improved-or-justified-tie** (explore). No other stage regresses past threshold. |
-| **evaluation** | `python -m evalgate` → `PipelineSummary` vs the round's **golden** | per type: holds within tolerance (exploit / explore), **byte-identical** `--tolerance 0` (refactor), or holds + **new fields** `--allow-new-fields` (feature). A genuine accuracy improvement is the one case a number *should* move — justify it. |
+| **lint + types** | `scripts/gate lint` (ruff check + format --check + ty) | clean; warnings are errors, `error-on-warning`. No `# type: ignore` / suppression — fix or widen. Also enforced per commit by `scripts/committer`. |
+| **correctness / regression** | `scripts/gate test <component>/ tests/integration/` (or `scripts/gate test` for the full suite) | still green — same count, no new failures. The integration suite imports across components, so a broken contract fails *here*. |
+| **profiling** | `scripts/gate bench` (harness through the bench lock) + `check_regressions` vs the ratcheted baseline | per round type: **improved** (exploit), **no regression** (refactor / feature), or **improved-or-justified-tie** (explore). No other stage regresses past threshold. |
+| **evaluation** | `scripts/gate eval` → `PipelineSummary` vs the round's **golden** (add `--tolerance 0` for refactor, `--allow-new-fields` for feature) | per type: holds within tolerance (exploit / explore), **byte-identical** (refactor), or holds + **new fields** (feature). A genuine accuracy improvement is the one case a number *should* move — justify it. |
+
+`scripts/gate all <component>` runs lint + test + eval in order for a fast check.
 
 Lint and types are *continuous* — `scripts/committer` runs them on every atomic
 commit, so your PR is lint/type-clean by construction. The evaluation gate is the
