@@ -21,7 +21,9 @@ from dataclasses import dataclass
 import numpy as np
 import polars as pl
 
-from .ic import ICMethod, ic_series_v2
+from etl.source import to_matrix
+
+from .ic import ICMethod, _ic_series_from_matrices
 from .newey_west import newey_west_tstat
 
 
@@ -96,16 +98,13 @@ def ic_horizon_curve(
     -------
     HorizonCurve with one HorizonPoint per entry in ``horizon_cols``.
     """
+    # Pre-compute the signals matrix once; each horizon reuses it.
+    S, s_dates = to_matrix(signals.select("date", "id", signal_col), signal_col)
+
     points = []
     for h, col in sorted(horizon_cols.items()):
-        ic_df = ic_series_v2(
-            signals,
-            forward_returns,
-            signal_col=signal_col,
-            return_col=col,
-            method=method,
-            min_obs=min_obs,
-        )
+        R, r_dates = to_matrix(forward_returns.select("date", "id", col), col)
+        ic_df = _ic_series_from_matrices(S, s_dates, R, r_dates, method, min_obs)
         s = ic_df["ic"].drop_nulls()
         arr = s.to_numpy()
         if len(arr) == 0:

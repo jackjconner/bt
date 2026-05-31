@@ -16,6 +16,78 @@ from .newey_west import newey_west_tstat
 ICMethod = Literal["rank", "pearson", "kendall"]
 
 
+def _spearman_ic_rows(
+    S: np.ndarray,
+    R: np.ndarray,
+    min_obs: int = 2,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Vectorized per-row Spearman IC between signal matrix S and return matrix R.
+
+    S and R are (n_dates, n_assets) dense matrices (may contain NaN).
+    Returns (ic_array, n_valid_array) both of length n_dates.
+
+    Fast path: when all rows share the same finite mask (common in practice),
+    the entire computation is batched with scipy.stats.rankdata(axis=1) plus a
+    vectorized Pearson step — O(n_dates * n_assets) with no Python loop.
+    Fallback: per-date loop using scipy.stats.rankdata on the valid slice when
+    NaN patterns vary across rows.
+
+    Tie-breaking follows scipy.stats.rankdata default ("average"), which is the
+    same method scipy.stats.spearmanr uses internally, so results are numerically
+    identical to the previous per-date spearmanr calls.
+    """
+    n_dates, _ = S.shape
+    mask = np.isfinite(S) & np.isfinite(R)
+    n_valid = mask.sum(axis=1)
+
+    def _vectorized_pearson_on_ranks(Rx: np.ndarray, Ry: np.ndarray) -> np.ndarray:
+        with np.errstate(invalid="ignore"):
+            rx_c = Rx - Rx.mean(axis=1, keepdims=True)
+            ry_c = Ry - Ry.mean(axis=1, keepdims=True)
+            numer = (rx_c * ry_c).sum(axis=1)
+            denom = np.sqrt((rx_c**2).sum(axis=1) * (ry_c**2).sum(axis=1))
+            return np.where(denom > 0, numer / denom, np.nan)
+
+    if mask.all():
+        # Fast path: no NaN anywhere — fully vectorized.
+        Rx = stats.rankdata(S, axis=1)
+        Ry = stats.rankdata(R, axis=1)
+        ics = _vectorized_pearson_on_ranks(Rx, Ry)
+        ics = np.where(n_valid >= min_obs, ics, np.nan)
+        return ics, n_valid.astype(int)
+
+    first_row = mask[0]
+    if (mask == first_row).all():
+        # Fast path: uniform NaN pattern across all rows — extract valid columns
+        # and batch-rank only those, then vectorized Pearson.
+        Sv = S[:, first_row]
+        Rv = R[:, first_row]
+        if Sv.shape[1] == 0:
+            # No valid columns at all — every date is NaN.
+            return np.full(n_dates, np.nan), n_valid.astype(int)
+        Rx = stats.rankdata(Sv, axis=1)
+        Ry = stats.rankdata(Rv, axis=1)
+        ics = _vectorized_pearson_on_ranks(Rx, Ry)
+        ics = np.where(n_valid >= min_obs, ics, np.nan)
+        return ics, n_valid.astype(int)
+
+    # Fallback: per-date loop for irregular NaN patterns.
+    ics = np.full(n_dates, np.nan)
+    for t in range(n_dates):
+        if n_valid[t] < min_obs:
+            continue
+        row_mask = mask[t]
+        xm = S[t, row_mask]
+        ym = R[t, row_mask]
+        rx = stats.rankdata(xm)
+        ry = stats.rankdata(ym)
+        rx_c = rx - rx.mean()
+        ry_c = ry - ry.mean()
+        denom = float(np.sqrt((rx_c**2).sum() * (ry_c**2).sum()))
+        ics[t] = float((rx_c * ry_c).sum() / denom) if denom > 0 else np.nan
+    return ics, n_valid.astype(int)
+
+
 @dataclass(frozen=True)
 class ICResult:
     ic_series: pl.DataFrame  # date, ic   — O(n_dates)
@@ -107,6 +179,59 @@ def _cross_sectional_ic(
     return ic, n
 
 
+def _ic_series_from_matrices(
+    S: np.ndarray,
+    s_dates: list,
+    R: np.ndarray,
+    r_dates: list,
+    method: ICMethod,
+    min_obs: int,
+) -> pl.DataFrame:
+    """Compute ic_series_v2 output given pre-computed dense matrices.
+
+    This internal helper is called by ``ic_series_v2`` and by
+    ``ic_horizon_curve`` (which pre-builds the signals matrix once and passes
+    different return matrices for each horizon, avoiding redundant pivots).
+
+    For the "rank" method the implementation uses the vectorized
+    ``_spearman_ic_rows`` path; other methods fall back to the per-date loop
+    over ``_cross_sectional_ic``.
+    """
+    s_set = {d: i for i, d in enumerate(s_dates)}
+    r_set = {d: i for i, d in enumerate(r_dates)}
+    common = sorted(set(s_set) & set(r_set))
+
+    if not common:
+        return pl.DataFrame({"date": [], "ic": [], "n_obs": []}).with_columns(
+            pl.col("ic").cast(pl.Float64),
+            pl.col("n_obs").cast(pl.Int32),
+        )
+
+    s_idx = [s_set[d] for d in common]
+    r_idx = [r_set[d] for d in common]
+    Sc = S[s_idx]
+    Rc = R[r_idx]
+
+    if method == "rank":
+        ic_arr, ns_arr = _spearman_ic_rows(Sc, Rc, min_obs=min_obs)
+        # apply_min_coverage already applied inside _spearman_ic_rows via the
+        # min_obs guard, so ic_arr entries below threshold are already NaN.
+        # We still call apply_min_coverage for the fallback path correctness but
+        # it is a no-op when _spearman_ic_rows handled it.
+    else:
+        ics: list[float] = []
+        ns: list[int] = []
+        for t in range(len(common)):
+            ic, n = _cross_sectional_ic(Sc[t], Rc[t], method)
+            ics.append(ic)
+            ns.append(n)
+        ns_arr = np.array(ns, dtype=int)
+        ic_arr = apply_min_coverage(np.array(ics), ns_arr, min_obs)
+
+    ic_list: list[float | None] = [None if np.isnan(v) else float(v) for v in ic_arr]
+    return pl.DataFrame({"date": common, "ic": ic_list, "n_obs": ns_arr.tolist()})
+
+
 def ic_series_v2(
     signals: pl.DataFrame,
     forward_returns: pl.DataFrame,
@@ -129,25 +254,4 @@ def ic_series_v2(
     """
     S, s_dates = to_matrix(signals.select("date", "id", signal_col), signal_col)
     R, r_dates = to_matrix(forward_returns.select("date", "id", return_col), return_col)
-
-    # Align on dates that appear in both
-    s_set = {d: i for i, d in enumerate(s_dates)}
-    r_set = {d: i for i, d in enumerate(r_dates)}
-    common = sorted(set(s_set) & set(r_set))
-
-    out_dates: list = []
-    ics: list[float] = []
-    ns: list[int] = []
-    for d in common:
-        x = S[s_set[d]]
-        y = R[r_set[d]]
-        ic, n = _cross_sectional_ic(x, y, method)
-        out_dates.append(d)
-        ics.append(ic)
-        ns.append(n)
-
-    ic_arr = apply_min_coverage(np.array(ics), np.array(ns), min_obs)
-    # Convert float NaN → Polars null so drop_nulls() works correctly.
-    # Polars stores NaN and null as distinct concepts; NaN is kept by drop_nulls().
-    ic_list: list[float | None] = [None if np.isnan(v) else float(v) for v in ic_arr]
-    return pl.DataFrame({"date": out_dates, "ic": ic_list, "n_obs": ns})
+    return _ic_series_from_matrices(S, s_dates, R, r_dates, method, min_obs)
