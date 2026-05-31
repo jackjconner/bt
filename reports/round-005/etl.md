@@ -4,14 +4,15 @@ component: etl
 pr: 39
 date: "2026-05-31"
 metric: "etl p50 ms — adjust_prices"
-verdict: pending
+verdict: accepted
 headline_delta: "adjust_prices −46% to −94% (~18× at 5040 dates); golden untouched"
 ---
 
 # etl · round 005
 
-> **⏳ Pending review.** Open as **PR #39** (`explore/etl-arrow-fuse`), **not yet
-> merged**. Gates below ran on the branch; verdict flips to `accepted` on merge.
+> **✓ Merged.** Landed as **PR #39** (`explore/etl-arrow-fuse`) on `main`. Gates
+> ran on the branch and were re-validated post-merge (full suite **1215 passed**;
+> evalgate **17/17**).
 
 Replace the per-asset *partition → Python loop → concat* corporate-action
 adjuster with a **whole-panel vectorized pass** — one `join_asof` plus a

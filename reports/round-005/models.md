@@ -4,14 +4,15 @@ component: models
 pr: 41
 date: "2026-05-31"
 metric: "models walk_forward_cv p50 ms"
-verdict: pending
+verdict: accepted
 headline_delta: "walk-forward 1.26–2.41×; wf_mean_ic byte-identical"
 ---
 
 # models · round 005
 
-> **⏳ Pending review.** Open as **PR #41** (`explore/models-gram-wf`), **not yet
-> merged**. Gates below ran on the branch; verdict flips to `accepted` on merge.
+> **✓ Merged.** Landed as **PR #41** (`explore/models-gram-wf`) on `main`. Gates
+> ran on the branch and were re-validated post-merge (full suite **1215 passed**;
+> evalgate **17/17**).
 
 Replace the per-fold sklearn `Ridge` refit loop with a **batched numpy-core
 walk-forward engine**: compute each date block's weighted moments once, assemble
