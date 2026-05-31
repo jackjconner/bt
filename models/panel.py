@@ -65,6 +65,66 @@ def date_ordinals(date_series: pl.Series) -> np.ndarray:
     return np.array([d.toordinal() for d in date_series.to_list()], dtype=np.int64)
 
 
+def _join_features_target(
+    features: pl.DataFrame,
+    target: pl.DataFrame,
+    target_col: str,
+    feature_cols: list[str],
+) -> pl.DataFrame:
+    """Inner-join feature panel with forward-return target on (date, id).
+
+    Rows present in one frame but absent from the other are silently dropped,
+    which is the correct behaviour when forward-return trailing rows are NaN.
+    """
+    return features.select(["date", "id", *feature_cols]).join(
+        target.select(["date", "id", target_col]),
+        on=["date", "id"],
+        how="inner",
+    )
+
+
+def _attach_weights(joined: pl.DataFrame, weights: pl.DataFrame | None) -> pl.DataFrame:
+    """Left-join per-sample weights onto the joined panel; fill missing with 1.0."""
+    if weights is not None:
+        joined = joined.join(
+            weights.select(["date", "id", "weight"]), on=["date", "id"], how="left"
+        )
+        return joined.with_columns(pl.col("weight").fill_null(1.0))
+    return joined.with_columns(pl.lit(1.0).alias("weight"))
+
+
+def _drop_null_rows(
+    joined: pl.DataFrame,
+    feature_cols: list[str],
+    target_col: str,
+) -> pl.DataFrame:
+    """Drop any row that has a null or NaN in any feature column or the target.
+
+    Polars distinguishes null from floating-point NaN; both are masked here.
+    """
+    null_exprs = [pl.col(c).is_null() | pl.col(c).is_nan() for c in feature_cols]
+    null_exprs += [pl.col(target_col).is_null() | pl.col(target_col).is_nan()]
+    return joined.filter(~pl.any_horizontal(*null_exprs))
+
+
+def _extract_arrays(
+    joined: pl.DataFrame,
+    feature_cols: list[str],
+    target_col: str,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Extract aligned numpy arrays from the cleaned joined DataFrame.
+
+    Returns ``(X, y, weights, dates_arr, ids_arr)`` in the row order of
+    ``joined`` (caller is responsible for sorting before calling this).
+    """
+    X = joined.select(feature_cols).to_numpy(allow_copy=True).astype(np.float64)
+    y = joined[target_col].to_numpy(allow_copy=True).astype(np.float64)
+    w = joined["weight"].to_numpy(allow_copy=True).astype(np.float64)
+    dates_arr = np.array(joined["date"].to_list(), dtype=object)
+    ids_arr = joined["id"].to_numpy(allow_copy=True).astype(np.int64)
+    return X, y, w, dates_arr, ids_arr
+
+
 def build_panel(
     features: pl.DataFrame,
     target: pl.DataFrame,
@@ -107,37 +167,14 @@ def build_panel(
     if feature_cols is None:
         feature_cols = [c for c in features.columns if c not in ("date", "id")]
 
-    # inner join: keeps only (date, id) pairs present in both
-    joined = features.select(["date", "id", *feature_cols]).join(
-        target.select(["date", "id", target_col]),
-        on=["date", "id"],
-        how="inner",
-    )
-
-    if weights is not None:
-        joined = joined.join(
-            weights.select(["date", "id", "weight"]), on=["date", "id"], how="left"
-        )
-        joined = joined.with_columns(pl.col("weight").fill_null(1.0))
-    else:
-        joined = joined.with_columns(pl.lit(1.0).alias("weight"))
-
+    joined = _join_features_target(features, target, target_col, feature_cols)
+    joined = _attach_weights(joined, weights)
     # sort by (date, id) for deterministic row order and contiguous date groups
     joined = joined.sort(["date", "id"])
+    joined = _drop_null_rows(joined, feature_cols, target_col)
 
-    # NaN / null masking: drop any row with a null/NaN in features OR target.
-    # Polars: null_count, but float NaN != null; cover both.
-    null_exprs = [pl.col(c).is_null() | pl.col(c).is_nan() for c in feature_cols]
-    null_exprs += [pl.col(target_col).is_null() | pl.col(target_col).is_nan()]
-    any_null = pl.any_horizontal(*null_exprs)
-    joined = joined.filter(~any_null)
-
-    X = joined.select(feature_cols).to_numpy(allow_copy=True).astype(np.float64)
-    y = joined[target_col].to_numpy(allow_copy=True).astype(np.float64)
-    w = joined["weight"].to_numpy(allow_copy=True).astype(np.float64)
+    X, y, w, dates_arr, ids_arr = _extract_arrays(joined, feature_cols, target_col)
     grp = date_ordinals(joined["date"])
-    dates_arr = np.array(joined["date"].to_list(), dtype=object)
-    ids_arr = joined["id"].to_numpy(allow_copy=True).astype(np.int64)
 
     return PanelArrays(
         X=X,
