@@ -7,10 +7,12 @@ from datetime import date
 import polars as pl
 
 from .quality import (
+    QUALITY_FLAG_COLUMNS,
     _check_duplicates,
     _check_frozen_series,
     _check_missing_sessions,
     _check_spike_outliers,
+    annotate_quality_flags,
     check,
 )
 
@@ -235,3 +237,146 @@ def test_check_spike_outliers_schema():
     assert "id" in spikes.columns
     assert "value" in spikes.columns
     assert "z_score" in spikes.columns
+
+
+# ------------------------------------------------------------------ #
+# annotate_quality_flags — row-level projection of the QualityReport
+# ------------------------------------------------------------------ #
+
+
+def test_annotate_preserves_rows_and_original_columns():
+    df = _clean_frame()
+    out = annotate_quality_flags(df, "value")
+    # Row count preserved.
+    assert out.height == df.height
+    # Every original column preserved, unchanged, and in original order first.
+    assert out.columns[: len(df.columns)] == df.columns
+    for col in df.columns:
+        assert out[col].to_list() == df[col].to_list()
+    # Flag columns appended in documented order, all Boolean.
+    assert out.columns[len(df.columns) :] == list(QUALITY_FLAG_COLUMNS)
+    for flag in QUALITY_FLAG_COLUMNS:
+        assert out.schema[flag] == pl.Boolean
+
+
+def test_annotate_does_not_mutate_input():
+    df = _clean_frame()
+    before = df.clone()
+    annotate_quality_flags(df, "value")
+    assert df.equals(before)
+
+
+def test_annotate_clean_frame_no_flags_fire():
+    df = _clean_frame()
+    out = annotate_quality_flags(df, "value")
+    for flag in QUALITY_FLAG_COLUMNS:
+        assert not out[flag].any(), f"{flag} fired on a clean frame"
+
+
+def test_annotate_outlier_flag_fires_on_spike():
+    df = _clean_frame()
+    spike = df.with_columns(
+        pl.when((pl.col("id") == 0) & (pl.col("date") == date(2020, 1, 2)))
+        .then(pl.lit(1000.0))
+        .otherwise(pl.col("value"))
+        .alias("value")
+    )
+    out = annotate_quality_flags(spike, "value", spike_z_threshold=4.0)
+    flagged = out.filter(pl.col("outlier_flagged"))
+    assert flagged.height == 1
+    assert flagged["id"][0] == 0
+    assert flagged["date"][0] == date(2020, 1, 2)
+
+
+def test_annotate_frozen_flag_fires_on_flat_series():
+    df = _clean_frame()
+    frozen = df.with_columns(
+        pl.when(pl.col("id") == 5).then(pl.lit(42.0)).otherwise(pl.col("value")).alias("value")
+    )
+    out = annotate_quality_flags(frozen, "value")
+    # Every row of the frozen id is flagged; no other id is.
+    assert out.filter(pl.col("is_frozen_series"))["id"].unique().to_list() == [5]
+    assert out.filter(pl.col("id") == 5)["is_frozen_series"].all()
+
+
+def test_annotate_duplicate_key_flag_fires():
+    df = _clean_frame()
+    duped = pl.concat([df, df.head(1)])
+    out = annotate_quality_flags(duped, "value")
+    dup_rows = out.filter(pl.col("is_duplicate_key"))
+    # The duplicated (date, id) key is flagged on both copies.
+    first = df.head(1)
+    assert (
+        dup_rows.filter(
+            (pl.col("date") == first["date"][0]) & (pl.col("id") == first["id"][0])
+        ).height
+        == 2
+    )
+
+
+def test_annotate_sparse_coverage_flag_fires():
+    df = _clean_frame(n_ids=3)
+    dates = [date(2020, 1, 2), date(2020, 1, 3), date(2020, 1, 6)]
+    df_gap = df.filter(~((pl.col("id") == 2) & (pl.col("date") == date(2020, 1, 3))))
+    out = annotate_quality_flags(df_gap, "value", expected_dates=dates, expected_ids=[0, 1, 2])
+    # id 2 has a missing session → all its surviving rows are sparse-flagged.
+    assert out.filter(pl.col("sparse_coverage"))["id"].unique().to_list() == [2]
+    assert out.filter(pl.col("id") == 2)["sparse_coverage"].all()
+
+
+def test_annotate_sparse_coverage_false_without_expected():
+    df = _clean_frame()
+    out = annotate_quality_flags(df, "value")
+    assert not out["sparse_coverage"].any()
+
+
+def test_annotate_price_stale_fires_on_repeat():
+    # id 0: 10, 10 (second is stale), 11 (not). id 1: distinct values.
+    df = pl.DataFrame(
+        {
+            "date": pl.Series(
+                [date(2020, 1, 2), date(2020, 1, 3), date(2020, 1, 6)] * 2, dtype=pl.Date
+            ),
+            "id": pl.Series([0, 0, 0, 1, 1, 1], dtype=pl.Int64),
+            "value": pl.Series([10.0, 10.0, 11.0, 20.0, 21.0, 22.0], dtype=pl.Float64),
+        }
+    )
+    out = annotate_quality_flags(df, "value")
+    stale = out.filter(pl.col("price_stale"))
+    assert stale.height == 1
+    assert stale["id"][0] == 0
+    assert stale["date"][0] == date(2020, 1, 3)
+
+
+def test_annotate_price_stale_first_row_not_stale():
+    """The first observation of each id has no prior obs → defaults to not-stale."""
+    df = pl.DataFrame(
+        {
+            "date": pl.Series([date(2020, 1, 2), date(2020, 1, 2)], dtype=pl.Date),
+            "id": pl.Series([0, 1], dtype=pl.Int64),
+            "value": pl.Series([10.0, 10.0], dtype=pl.Float64),
+        }
+    )
+    out = annotate_quality_flags(df, "value")
+    assert not out["price_stale"].any()
+
+
+def test_annotate_preserves_row_order_with_unsorted_input():
+    """Flags must align to rows even when input is not (id, date)-sorted."""
+    df = pl.DataFrame(
+        {
+            "date": pl.Series(
+                [date(2020, 1, 6), date(2020, 1, 2), date(2020, 1, 3)], dtype=pl.Date
+            ),
+            "id": pl.Series([0, 0, 0], dtype=pl.Int64),
+            "value": pl.Series([11.0, 10.0, 10.0], dtype=pl.Float64),
+        }
+    )
+    out = annotate_quality_flags(df, "value")
+    # Original row order preserved.
+    assert out["date"].to_list() == df["date"].to_list()
+    # Stale fires only on Jan-3 (prior obs Jan-2 had the same 10.0), not on the
+    # Jan-6 row that physically precedes it in the frame.
+    stale = out.filter(pl.col("price_stale"))
+    assert stale.height == 1
+    assert stale["date"][0] == date(2020, 1, 3)
