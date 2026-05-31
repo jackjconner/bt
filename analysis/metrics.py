@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 import polars as pl
@@ -19,6 +19,11 @@ class AnalysisResult:
     max_drawdown: float
     annualized_return: float
     annualized_vol: float
+    # Enriched fields added in the production build — default to sentinel
+    # values so existing call-sites that construct AnalysisResult directly
+    # (e.g. tests) are not broken.
+    cagr: float = field(default=0.0)
+    sortino: float = field(default=0.0)
 
 
 def returns_from_nav(nav: pl.DataFrame) -> pl.DataFrame:
@@ -29,9 +34,22 @@ def returns_from_nav(nav: pl.DataFrame) -> pl.DataFrame:
     )
 
 
-def sharpe(returns: pl.DataFrame, rf: float = 0.0) -> float:
+def sharpe(
+    returns: pl.DataFrame,
+    rf: float | pl.Series = 0.0,
+) -> float:
+    """Annualized Sharpe ratio.
+
+    `rf` may be a scalar annual rate (divided internally by TRADING_DAYS) or
+    a Polars Series of fractional *daily* rates aligned to `returns` by
+    position — the latter supports a time-varying risk-free rate from
+    `risk_free_rate.daily_rate`.
+    """
     r = returns["return_1d"]
-    excess = r - rf / TRADING_DAYS
+    if isinstance(rf, pl.Series):
+        excess = r - rf
+    else:
+        excess = r - rf / TRADING_DAYS
     std = excess.std()
     if std is None or std == 0:
         return 0.0
@@ -57,6 +75,8 @@ class BacktestAnalyzerImpl:
         ann_vol = float(rets["return_1d"].std() or 0.0) * (TRADING_DAYS ** 0.5)
         ann_ret = float(rets["return_1d"].mean() or 0.0) * TRADING_DAYS
 
+        from .risk import cagr as _cagr, sortino as _sortino
+
         return AnalysisResult(
             returns_series=rets,
             drawdown_series=dd,
@@ -64,4 +84,6 @@ class BacktestAnalyzerImpl:
             max_drawdown=max_drawdown(nav),
             annualized_return=ann_ret,
             annualized_vol=ann_vol,
+            cagr=_cagr(nav),
+            sortino=_sortino(rets, self.risk_free / TRADING_DAYS),
         )
