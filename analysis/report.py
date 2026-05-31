@@ -113,7 +113,7 @@ class AttributionReport:
 
 
 # ---------------------------------------------------------------------------
-# Internal helpers
+# Internal helpers — factor exposures
 # ---------------------------------------------------------------------------
 
 
@@ -215,6 +215,120 @@ def _factor_return_contributions(
     )
 
 
+# ---------------------------------------------------------------------------
+# Internal helpers — Brinson decomposition
+# ---------------------------------------------------------------------------
+
+
+def _empty_brinson_decomposition() -> BrinsonDecomposition:
+    """Return an empty BrinsonDecomposition for the no-overlap degenerate case."""
+    empty = pl.DataFrame(
+        {
+            "sector": pl.Series([], dtype=pl.Categorical),
+            "allocation": pl.Series([], dtype=pl.Float64),
+            "selection": pl.Series([], dtype=pl.Float64),
+            "interaction": pl.Series([], dtype=pl.Float64),
+            "active_return": pl.Series([], dtype=pl.Float64),
+        }
+    )
+    return BrinsonDecomposition(
+        allocation=empty.select("sector", "allocation"),
+        selection=empty.select("sector", "selection"),
+        interaction=empty.select("sector", "interaction"),
+        sector_active_return=empty.select("sector", "active_return"),
+    )
+
+
+def _attach_sector_with_returns(
+    weights_df: pl.DataFrame,
+    sector_map: pl.DataFrame,  # (id, sector)
+    asset_returns: pl.DataFrame,  # (date, id, return_1d)
+    weight_col: str,
+) -> pl.DataFrame:
+    """Attach sector labels and daily returns to a weight frame.
+
+    Fills missing sectors as ``"Unknown"`` and missing returns as ``0.0``.
+    Returns the input frame extended with ``sector`` and ``return_1d`` columns.
+    """
+    with_sector = weights_df.join(sector_map, on="id", how="left").with_columns(
+        pl.col("sector").fill_null(pl.lit("Unknown").cast(pl.Categorical))
+    )
+    return with_sector.join(asset_returns, on=["date", "id"], how="left").with_columns(
+        pl.col("return_1d").fill_null(0.0)
+    )
+
+
+def _sector_weights_and_returns(
+    weights_with_returns: pl.DataFrame,
+    weight_col: str,
+    return_col_prefix: str,
+) -> pl.DataFrame:
+    """Aggregate per-(date, sector) weight sums and weighted-average returns.
+
+    ``weight_col`` is the name of the weight column (e.g. ``"weight"`` or
+    ``"benchmark_weight"``).  ``return_col_prefix`` is used to name the
+    output columns as ``w_{prefix}_s`` and ``R_{prefix}_s``.
+
+    Returns a DataFrame with columns
+    ``(date, sector, w_{prefix}_s, R_{prefix}_s)``.
+    """
+    w_s = f"w_{return_col_prefix}_s"
+    R_raw = f"R_{return_col_prefix}_s_raw"
+    R_s = f"R_{return_col_prefix}_s"
+
+    return (
+        weights_with_returns.group_by(["date", "sector"])
+        .agg(
+            pl.col(weight_col).sum().alias(w_s),
+            (pl.col(weight_col) * pl.col("return_1d")).sum().alias(R_raw),
+        )
+        .with_columns((pl.col(R_raw) / pl.col(w_s).clip(lower_bound=1e-12)).alias(R_s))
+        .drop(R_raw)
+    )
+
+
+def _compute_brinson_effects(sector_df: pl.DataFrame) -> pl.DataFrame:
+    """Add allocation, selection, interaction, and active_return columns.
+
+    Expects columns ``(date, sector, w_p_s, R_p_s, w_b_s, R_b_s, R_b)``.
+
+    Brinson-Hood-Beebower formulae:
+        allocation  = (w_p_s - w_b_s) * (R_b_s - R_b)
+        selection   = w_b_s            * (R_p_s - R_b_s)
+        interaction = (w_p_s - w_b_s) * (R_p_s - R_b_s)
+        active_return = allocation + selection + interaction
+    """
+    return sector_df.with_columns(
+        ((pl.col("w_p_s") - pl.col("w_b_s")) * (pl.col("R_b_s") - pl.col("R_b"))).alias(
+            "allocation"
+        ),
+        (pl.col("w_b_s") * (pl.col("R_p_s") - pl.col("R_b_s"))).alias("selection"),
+        ((pl.col("w_p_s") - pl.col("w_b_s")) * (pl.col("R_p_s") - pl.col("R_b_s"))).alias(
+            "interaction"
+        ),
+    ).with_columns(
+        (pl.col("allocation") + pl.col("selection") + pl.col("interaction")).alias("active_return")
+    )
+
+
+def _aggregate_sector_effects(sector_df: pl.DataFrame) -> pl.DataFrame:
+    """Sum allocation/selection/interaction/active_return over all dates per sector.
+
+    Returns ``(sector, allocation, selection, interaction, active_return)``
+    sorted by sector.
+    """
+    return (
+        sector_df.group_by("sector")
+        .agg(
+            pl.col("allocation").sum(),
+            pl.col("selection").sum(),
+            pl.col("interaction").sum(),
+            pl.col("active_return").sum(),
+        )
+        .sort("sector")
+    )
+
+
 def _brinson_decomposition(
     portfolio_weights: pl.DataFrame,  # (date, id, weight)
     benchmark_weights: pl.DataFrame,  # (date, id, benchmark_weight)
@@ -242,79 +356,33 @@ def _brinson_decomposition(
     """
     sector_map = security_master.select("id", "sector")
 
-    # Restrict to common dates
+    # Restrict to common dates across all three panels
     port_dates = set(portfolio_weights["date"].unique().to_list())
     bmk_dates = set(benchmark_weights["date"].unique().to_list())
     ret_dates = set(asset_returns["date"].unique().to_list())
     common_dates = list(port_dates & bmk_dates & ret_dates)
 
     if not common_dates:
-        empty = pl.DataFrame(
-            {
-                "sector": pl.Series([], dtype=pl.Categorical),
-                "allocation": pl.Series([], dtype=pl.Float64),
-                "selection": pl.Series([], dtype=pl.Float64),
-                "interaction": pl.Series([], dtype=pl.Float64),
-                "active_return": pl.Series([], dtype=pl.Float64),
-            }
-        )
-        return BrinsonDecomposition(
-            allocation=empty.select("sector", "allocation"),
-            selection=empty.select("sector", "selection"),
-            interaction=empty.select("sector", "interaction"),
-            sector_active_return=empty.select("sector", "active_return"),
-        )
+        return _empty_brinson_decomposition()
 
     pw = portfolio_weights.filter(pl.col("date").is_in(common_dates))
     bw = benchmark_weights.filter(pl.col("date").is_in(common_dates))
     ar = asset_returns.filter(pl.col("date").is_in(common_dates)).select("date", "id", "return_1d")
 
-    # Attach sectors
-    pw_s = pw.join(sector_map, on="id", how="left").with_columns(
-        pl.col("sector").fill_null(pl.lit("Unknown").cast(pl.Categorical))
-    )
-    bw_s = bw.join(sector_map, on="id", how="left").with_columns(
-        pl.col("sector").fill_null(pl.lit("Unknown").cast(pl.Categorical))
-    )
+    # Attach sectors and returns to each weight frame
+    pw_ret = _attach_sector_with_returns(pw, sector_map, ar, "weight")
+    bw_ret = _attach_sector_with_returns(bw, sector_map, ar, "benchmark_weight")
 
-    # Per (date, id): portfolio-weighted return contribution
-    pw_ret = pw_s.join(ar, on=["date", "id"], how="left").with_columns(
-        pl.col("return_1d").fill_null(0.0)
-    )
-    bw_ret = bw_s.join(ar, on=["date", "id"], how="left").with_columns(
-        pl.col("return_1d").fill_null(0.0)
-    )
-
-    # Per (date, sector): sector weights and returns
-    port_sector = (
-        pw_ret.group_by(["date", "sector"])
-        .agg(
-            pl.col("weight").sum().alias("w_p_s"),
-            (pl.col("weight") * pl.col("return_1d")).sum().alias("R_p_s_raw"),
-        )
-        # R_p_s = weighted avg return = sum(w_i * r_i) / w_p_s
-        .with_columns(
-            (pl.col("R_p_s_raw") / pl.col("w_p_s").clip(lower_bound=1e-12)).alias("R_p_s")
-        )
-    )
-
-    bmk_sector = (
-        bw_ret.group_by(["date", "sector"])
-        .agg(
-            pl.col("benchmark_weight").sum().alias("w_b_s"),
-            (pl.col("benchmark_weight") * pl.col("return_1d")).sum().alias("R_b_s_raw"),
-        )
-        .with_columns(
-            (pl.col("R_b_s_raw") / pl.col("w_b_s").clip(lower_bound=1e-12)).alias("R_b_s")
-        )
-    )
+    # Per (date, sector): aggregated weights and weighted-average returns
+    port_sector = _sector_weights_and_returns(pw_ret, "weight", "p")
+    bmk_sector = _sector_weights_and_returns(bw_ret, "benchmark_weight", "b")
 
     # Total benchmark return per date: R_b = sum_s(w_b_s * R_b_s)
     bmk_total = bmk_sector.group_by("date").agg(
         (pl.col("w_b_s") * pl.col("R_b_s")).sum().alias("R_b")
     )
 
-    # Join everything
+    # Merge portfolio and benchmark sector stats; fill missing sectors with zeros
     sector_df = (
         port_sector.join(bmk_sector, on=["date", "sector"], how="full", coalesce=True)
         .with_columns(
@@ -327,33 +395,9 @@ def _brinson_decomposition(
         .with_columns(pl.col("R_b").fill_null(0.0))
     )
 
-    # Brinson effects
-    sector_df = sector_df.with_columns(
-        ((pl.col("w_p_s") - pl.col("w_b_s")) * (pl.col("R_b_s") - pl.col("R_b"))).alias(
-            "allocation"
-        ),
-        (pl.col("w_b_s") * (pl.col("R_p_s") - pl.col("R_b_s"))).alias("selection"),
-        ((pl.col("w_p_s") - pl.col("w_b_s")) * (pl.col("R_p_s") - pl.col("R_b_s"))).alias(
-            "interaction"
-        ),
-    )
-
-    # Active return per sector per date
-    sector_df = sector_df.with_columns(
-        (pl.col("allocation") + pl.col("selection") + pl.col("interaction")).alias("active_return")
-    )
-
-    # Aggregate across dates
-    period_totals = (
-        sector_df.group_by("sector")
-        .agg(
-            pl.col("allocation").sum(),
-            pl.col("selection").sum(),
-            pl.col("interaction").sum(),
-            pl.col("active_return").sum(),
-        )
-        .sort("sector")
-    )
+    # Compute Brinson effects per (date, sector), then sum to period totals
+    sector_df = _compute_brinson_effects(sector_df)
+    period_totals = _aggregate_sector_effects(sector_df)
 
     return BrinsonDecomposition(
         allocation=period_totals.select("sector", "allocation"),
@@ -361,6 +405,52 @@ def _brinson_decomposition(
         interaction=period_totals.select("sector", "interaction"),
         sector_active_return=period_totals.select("sector", "active_return"),
     )
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers — analyze_attribution sub-steps
+# ---------------------------------------------------------------------------
+
+
+def _portfolio_weights_and_strategy_returns(
+    backtest_result: BacktestResult,
+) -> tuple[pl.DataFrame, pl.DataFrame]:
+    """Reconstruct portfolio weights and compute strategy daily returns from NAV.
+
+    Returns ``(portfolio_weights, strategy_returns)`` where
+    ``portfolio_weights`` is ``(date, id, weight)`` and
+    ``strategy_returns`` is ``(date, return_1d)``.
+    """
+    from .metrics import returns_from_nav
+
+    portfolio_weights = reconstruct_weights(backtest_result.trade_log)
+    strategy_returns = returns_from_nav(backtest_result.nav_history)
+    return portfolio_weights, strategy_returns
+
+
+def _benchmark_relative_scalars(
+    strategy_returns: pl.DataFrame,
+    benchmark_returns: pl.DataFrame,
+) -> tuple[pl.DataFrame, float, float, dict[str, float]]:
+    """Compute benchmark-relative series and summary scalars.
+
+    Returns ``(ar_series, te, ir, benchmark_metrics)`` where:
+    - ``ar_series`` is ``(date, active_return)``
+    - ``te`` is annualized tracking error (fractional)
+    - ``ir`` is the information ratio
+    - ``benchmark_metrics`` is a dict with keys
+      ``active_return_ann``, ``tracking_error``, ``information_ratio``
+    """
+    ar_series = active_returns(strategy_returns, benchmark_returns)
+    te = tracking_error(strategy_returns, benchmark_returns)
+    ir = information_ratio(strategy_returns, benchmark_returns)
+    active_ret_ann = to_float(ar_series["active_return"].mean() or 0.0) * 252
+    benchmark_metrics: dict[str, float] = {
+        "active_return_ann": active_ret_ann,
+        "tracking_error": te,
+        "information_ratio": ir,
+    }
+    return ar_series, te, ir, benchmark_metrics
 
 
 # ---------------------------------------------------------------------------
@@ -415,42 +505,29 @@ def analyze_attribution(
     -------
     AttributionReport
     """
-    from .metrics import returns_from_nav
+    # 1. Portfolio weights and strategy returns from BacktestResult
+    portfolio_weights, strategy_returns = _portfolio_weights_and_strategy_returns(backtest_result)
 
-    # 1. Portfolio weights from trade log
-    portfolio_weights = reconstruct_weights(backtest_result.trade_log)
-
-    # 2. Strategy returns from NAV
-    strategy_returns = returns_from_nav(backtest_result.nav_history)
-
-    # 3. Factor attribution (OLS on fractional factor returns)
+    # 2. Factor attribution (OLS on fractional factor returns)
     fr_fractional = factor_returns.with_columns((pl.col("return") / 100.0).alias("return"))
     fa = factor_attribution(strategy_returns, fr_fractional)
 
-    # 4. Benchmark-relative scalars
-    ar_series = active_returns(strategy_returns, benchmark_returns)
-    te = tracking_error(strategy_returns, benchmark_returns)
-    ir = information_ratio(strategy_returns, benchmark_returns)
+    # 3. Benchmark-relative scalars
+    ar_series, te, ir, benchmark_metrics = _benchmark_relative_scalars(
+        strategy_returns, benchmark_returns
+    )
 
-    active_ret_ann = to_float(ar_series["active_return"].mean() or 0.0) * 252
-
-    benchmark_metrics = {
-        "active_return_ann": active_ret_ann,
-        "tracking_error": te,
-        "information_ratio": ir,
-    }
-
-    # 5. Factor active exposures
+    # 4. Factor active exposures
     if benchmark_weights is not None:
         fae = _active_factor_exposures(portfolio_weights, benchmark_weights, factor_loadings)
     else:
         # No benchmark weights: exposures are portfolio-only (active = portfolio exposure)
         fae = _active_factor_exposures_portfolio_only(portfolio_weights, factor_loadings)
 
-    # 6. Factor return contributions
+    # 5. Factor return contributions
     frc = _factor_return_contributions(fae, fr_fractional)
 
-    # 7. Brinson decomposition
+    # 6. Brinson decomposition
     brinson: BrinsonDecomposition | None = None
     if benchmark_weights is not None and security_master is not None:
         brinson = _brinson_decomposition(
