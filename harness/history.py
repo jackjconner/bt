@@ -31,7 +31,6 @@ from profiling.regression import RegressionReport
 from profiling.scaling import ScalingFit
 from profiling.trials import TrialResult
 
-
 # ---------------------------------------------------------------------------
 # Public dataclasses
 # ---------------------------------------------------------------------------

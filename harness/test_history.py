@@ -15,7 +15,6 @@ from harness.history import (
 )
 from profiling.trials import TrialResult
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -87,7 +86,7 @@ def test_empty_store_returns_empty_frames(tmp_path: Path) -> None:
 
 
 def test_first_write_creates_all_tables(tmp_path: Path) -> None:
-    p50 = {c: 0.1 for c in _COMPONENTS}
+    p50 = dict.fromkeys(_COMPONENTS, 0.1)
     _write(tmp_path, "run-1", p50)
 
     assert (tmp_path / "improvement_runs.parquet").exists()
@@ -95,7 +94,7 @@ def test_first_write_creates_all_tables(tmp_path: Path) -> None:
 
 
 def test_first_write_one_run_row(tmp_path: Path) -> None:
-    _write(tmp_path, "run-1", {c: 0.1 for c in _COMPONENTS})
+    _write(tmp_path, "run-1", dict.fromkeys(_COMPONENTS, 0.1))
     runs = read_improvement_runs(tmp_path)
     assert len(runs) == 1
     assert runs["run_id"][0] == "run-1"
@@ -103,13 +102,13 @@ def test_first_write_one_run_row(tmp_path: Path) -> None:
 
 def test_first_write_snapshot_count(tmp_path: Path) -> None:
     # One row per component + one e2e row.
-    _write(tmp_path, "run-1", {c: 0.1 for c in _COMPONENTS})
+    _write(tmp_path, "run-1", dict.fromkeys(_COMPONENTS, 0.1))
     snaps = read_component_snapshots(tmp_path)
     assert len(snaps) == len(_COMPONENTS) + 1
 
 
 def test_first_write_has_null_deltas(tmp_path: Path) -> None:
-    _write(tmp_path, "run-1", {c: 0.1 for c in _COMPONENTS})
+    _write(tmp_path, "run-1", dict.fromkeys(_COMPONENTS, 0.1))
     snaps = read_component_snapshots(tmp_path)
     assert snaps["vs_prev_p50_pct"].is_null().all()
     assert snaps["vs_baseline_p50_pct"].is_null().all()
