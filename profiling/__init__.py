@@ -1,4 +1,12 @@
 from .environment import RunEnvironment, capture_environment
+from .flamegraph import (
+    ProfileArtifact,
+    capture_cpu,
+    capture_memory,
+    prune_profiles,
+    read_artifacts,
+    write_artifacts,
+)
 from .memory import MemSnapshot, frames_size_mb, obj_size_mb, rss_mb, snapshot
 from .output import write_json, write_measurements_parquet
 from .regression import RegressionReport, RegressionViolation, check_regressions
@@ -11,10 +19,11 @@ from .trials import TrialMeasurement, TrialResult, TrialStats, run_trials
 __all__ = [
     # memory
     "MemSnapshot",
+    # environment (feature 3)
+    "ProfileArtifact",
     # regression (feature 5)
     "RegressionReport",
     "RegressionViolation",
-    # environment (feature 3)
     "RunEnvironment",
     # scaling (feature 6)
     "ScalingFit",
@@ -28,7 +37,9 @@ __all__ = [
     "TrialMeasurement",
     "TrialResult",
     "TrialStats",
+    "capture_cpu",
     "capture_environment",
+    "capture_memory",
     "check_regressions",
     "collect_stage",
     "fit_scaling",
@@ -36,11 +47,14 @@ __all__ = [
     "frames_size_mb",
     "obj_size_mb",
     "print_report",
+    "prune_profiles",
+    "read_artifacts",
     "read_measurements",
     "read_runs",
     "rss_mb",
     "run_trials",
     "snapshot",
+    "write_artifacts",
     # output (feature 7)
     "write_json",
     "write_measurements_parquet",
