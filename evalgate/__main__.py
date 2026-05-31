@@ -15,7 +15,15 @@ import sys
 import tempfile
 from pathlib import Path
 
-from evalgate._core import diff_summaries, format_diff_table, load_golden, save_golden, serialize
+from evalgate._core import (
+    additive_only,
+    classify_diff,
+    diff_summaries,
+    format_diff_table,
+    load_golden,
+    save_golden,
+    serialize,
+)
 
 
 def _run_pipeline() -> dict[str, object]:
@@ -55,6 +63,16 @@ def main(argv: list[str] | None = None) -> int:
         type=Path,
         default=Path(".oversight/golden.json"),
         help="Path to the golden JSON file (default: .oversight/golden.json).",
+    )
+    parser.add_argument(
+        "--allow-new-fields",
+        action="store_true",
+        help=(
+            "Feature-round gate: pass when the only failing fields are ones the run "
+            "*added* (present in current, absent from golden). Existing values must "
+            "still hold within tolerance and no field may be dropped. Re-run with "
+            "--save afterward to absorb the new fields into the golden."
+        ),
     )
     parser.add_argument(
         "--field-tol",
@@ -103,6 +121,25 @@ def main(argv: list[str] | None = None) -> int:
     golden = load_golden(golden_path)
     rows = diff_summaries(golden, current, rel_tol=rel_tol, field_tol=field_tol or None)
     print(format_diff_table(rows))
+
+    if args.allow_new_fields:
+        classification = classify_diff(rows)
+        if additive_only(classification):
+            if classification.new_fields:
+                added = ", ".join(r.field for r in classification.new_fields)
+                print(f"\nevalgate: --allow-new-fields — additive growth accepted: {added}")
+                print("evalgate: re-run with --save to absorb the new fields into the golden.")
+            else:
+                print("\nevalgate: all fields within tolerance.")
+            return 0
+        offenders = classification.moved_existing + classification.missing_fields
+        names = ", ".join(r.field for r in offenders)
+        print(
+            f"\nevalgate: --allow-new-fields — {len(offenders)} existing field(s) moved or "
+            f"dropped (not additive): {names} — exiting non-zero.",
+            file=sys.stderr,
+        )
+        return 1
 
     n_fail = sum(1 for r in rows if not r.passed)
     if n_fail:

@@ -240,6 +240,70 @@ def diff_summaries(
 
 
 # ---------------------------------------------------------------------------
+# Classification — partition a diff into held / new / missing / moved
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class DiffClassification:
+    """A diff partitioned by *why* each row passed or failed.
+
+    The four buckets are mutually exclusive and together cover every row:
+
+    - ``held``           — the row passed tolerance (value unchanged within tol).
+    - ``new_fields``     — failed, present only in *current* (``golden is None``):
+      a field the run added.  Covers top-level fields *and* ``horizon_ic[k]``
+      sub-keys, both of which carry ``golden=None`` when only current has them.
+    - ``missing_fields`` — failed, present only in *golden* (``current is None``):
+      a field the run dropped.
+    - ``moved_existing`` — failed with both sides present: an existing value
+      moved past tolerance (a genuine regression, or a justified accuracy shift).
+
+    This lets a caller treat *additive growth* (``new_fields`` only) differently
+    from a *regression* (``moved_existing`` / ``missing_fields``) — the feature
+    round's evaluation gate, see ``__main__.py --allow-new-fields``.
+    """
+
+    held: list[DiffRow]
+    new_fields: list[DiffRow]
+    missing_fields: list[DiffRow]
+    moved_existing: list[DiffRow]
+
+
+def classify_diff(rows: list[DiffRow]) -> DiffClassification:
+    """Partition ``rows`` (from :func:`diff_summaries`) into the four buckets."""
+    held: list[DiffRow] = []
+    new_fields: list[DiffRow] = []
+    missing_fields: list[DiffRow] = []
+    moved_existing: list[DiffRow] = []
+    for row in rows:
+        if row.passed:
+            held.append(row)
+        elif row.golden is None and row.current is not None:
+            new_fields.append(row)
+        elif row.current is None and row.golden is not None:
+            missing_fields.append(row)
+        else:
+            moved_existing.append(row)
+    return DiffClassification(
+        held=held,
+        new_fields=new_fields,
+        missing_fields=missing_fields,
+        moved_existing=moved_existing,
+    )
+
+
+def additive_only(classification: DiffClassification) -> bool:
+    """True iff the only failures are *new* fields (additive growth).
+
+    The feature-round gate: existing numbers all held and nothing was dropped,
+    so any failing rows are purely fields the run added.  A moved existing value
+    or a dropped field makes this False.
+    """
+    return not classification.moved_existing and not classification.missing_fields
+
+
+# ---------------------------------------------------------------------------
 # Formatting
 # ---------------------------------------------------------------------------
 
