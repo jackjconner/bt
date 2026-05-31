@@ -6,7 +6,7 @@ from .loader import DatasetLoader
 from .masked_pivot import to_masked_matrix
 from .pit import as_of_slice, latest_as_of
 from .quality import QualityReport, check
-from .source import date_axis, generate_returns, to_matrix, write_parquet
+from .source import date_axis, generate_returns, to_float, to_matrix, write_parquet
 from .stream import StreamLoader
 from .universe import apply_security_master, resolve_universe
 
@@ -31,6 +31,7 @@ __all__ = [
     "latest_as_of",
     "resolve_universe",
     "sessions_between",
+    "to_float",
     "to_masked_matrix",
     "to_matrix",
     "write_parquet",

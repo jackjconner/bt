@@ -2,9 +2,22 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 from pathlib import Path
+from typing import SupportsFloat, cast
 
 import numpy as np
 import polars as pl
+
+
+def to_float(x: object) -> float:
+    """``float()`` of a scalar whose static type is an over-broad union.
+
+    polars types its Series aggregations (``.min``/``.mean``/``.std``/…) as a
+    union that includes temporal types, because the same method works on date
+    and duration columns. On the numeric columns we feed them that union is a
+    false positive; the ``cast`` narrows it for the type checker — it asserts
+    one type, it does not hide other errors the way a blanket ignore would.
+    """
+    return float(cast(SupportsFloat, x))
 
 
 def to_matrix(df: pl.DataFrame, value_col: str) -> tuple[np.ndarray, list[date]]:
