@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+# Launch the oversight deck — bt's live improvement-loop dashboard.
+#
+#   scripts/oversight            open the deck in this terminal (tmux pane).
+#   scripts/oversight --serve    also expose it on the tailnet over HTTPS via
+#                                ttyd → tailscale serve, read-only.
+#
+# The deck reads from .oversight/round_state.json (live, orchestrator-written),
+# git + gh, IMPROVEMENTS.md / API_REQUESTS.md, and the parquet history under
+# .oversight/history. Empty state renders an "awaiting first round" deck.
+#
+# ttyd + tailscale are system prerequisites for --serve, checked at runtime
+# (boundary checks — a missing tool is a clear error, never a silent fallback).
+set -euo pipefail
+
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT"
+
+HISTORY_DIR=".oversight/history"
+TUI=(uv run python -m oversight.tui --root . --history-dir "$HISTORY_DIR")
+
+PORT=7681
+SERVE_URL="https://archbtw.tailcbac91.ts.net"
+
+if [ "${1:-}" != "--serve" ]; then
+  exec "${TUI[@]}"
+fi
+
+# --- --serve: bridge the TUI to the tailnet over HTTPS -----------------------
+
+command -v ttyd >/dev/null 2>&1 || {
+  echo "oversight: 'ttyd' not found on PATH — needed to bridge the TUI to the web." >&2
+  echo "           install it:  sudo pacman -S ttyd" >&2
+  exit 1
+}
+command -v tailscale >/dev/null 2>&1 || {
+  echo "oversight: 'tailscale' not found on PATH — needed to serve on the tailnet." >&2
+  exit 1
+}
+
+ttyd_pid=""
+cleanup() {
+  tailscale serve --https=443 off >/dev/null 2>&1 || true
+  if [ -n "$ttyd_pid" ]; then
+    kill "$ttyd_pid" >/dev/null 2>&1 || true
+  fi
+}
+trap cleanup EXIT INT TERM
+
+# ttyd serves the TUI as a read-only terminal in the browser (no -W = no input
+# forwarded to the process, so the deck cannot be driven from the web).
+ttyd -p "$PORT" -t titleFixed='bt · oversight' -- "${TUI[@]}" &
+ttyd_pid=$!
+
+# Map the tailnet HTTPS endpoint to the local ttyd port, in the background.
+tailscale serve --bg --https=443 "http://127.0.0.1:${PORT}"
+
+echo "oversight: serving the deck (read-only) at ${SERVE_URL}"
+echo "oversight: Ctrl-C to tear down (tailscale serve off + stop ttyd)."
+
+wait "$ttyd_pid"
