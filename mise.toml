@@ -1,0 +1,20 @@
+# mise tasks for the bt change-report site.
+#   mise run setup   → wire the git hooks (post-commit auto-rebuilds the site)
+#   mise run build   → render reports/_site/ once
+#   mise run serve   → build + serve on the tailnet (foreground; Ctrl-C to stop)
+#
+# The post-commit hook rebuilds _site/ whenever a commit touches reports/, and
+# the served page polls build-id.txt and live-reloads — so landing a report
+# auto-publishes to an open tab with no manual build/refresh.
+
+[tasks.setup]
+description = "Wire git hooks so commits touching reports/ auto-rebuild the site"
+run = "git config core.hooksPath .githooks"
+
+[tasks.build]
+description = "Render the change-report static site to reports/_site/"
+run = "scripts/reports build"
+
+[tasks.serve]
+description = "Build, then serve the change-report site on the tailnet (Ctrl-C to stop)"
+run = "scripts/reports --serve"

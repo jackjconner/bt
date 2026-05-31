@@ -85,6 +85,23 @@ See `.claude/skills/change-report/SKILL.md` for the full protocol.
 ## Browsing reports
 
 ```bash
-scripts/reports build          # renders reports/_site/
-scripts/reports --serve        # build + serve over Tailscale HTTPS
+mise run setup                 # once: wire the post-commit hook (auto-rebuild)
+mise run serve                 # build + serve over Tailscale HTTPS (foreground)
+mise run build                 # render reports/_site/ once
 ```
+
+`mise run serve` wraps `scripts/reports --serve`; `mise run build` wraps
+`scripts/reports build`. Leave `serve` running in a tmux pane — it serves
+`_site/` on the tailnet.
+
+### Auto-publish + live-reload
+
+Once `mise run setup` has pointed git at `.githooks/`, the **post-commit hook
+rebuilds `reports/_site/` whenever a commit touches `reports/`** — so a report a
+round lands is published automatically, with no manual `build` step.
+
+Every rendered page polls `_site/build-id.txt` (a content hash bumped on each
+render) once a second and reloads itself when it changes. So with `mise run
+serve` running, an open tab **live-reloads** the instant a new report is
+committed — no manual refresh. The poll is dependency-free (no websocket), so it
+works cleanly through the Tailscale HTTPS proxy.

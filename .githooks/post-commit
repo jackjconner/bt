@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# post-commit — rebuild the change-report static site when a commit touches
+# reports/, so reports/_site/ (and its build-id.txt) stay in lockstep with the
+# committed reports.  A running `mise run serve` keeps serving _site/, and the
+# page's build-id poller reloads open tabs — so a landed report auto-publishes.
+#
+# Wired via `git config core.hooksPath .githooks` (run `mise run setup` once).
+# Cheap no-op for commits that don't touch reports/ (the common case), and for
+# component worktrees, which never touch reports/.
+set -euo pipefail
+
+ROOT="$(git rev-parse --show-toplevel)"
+
+if git diff-tree --no-commit-id --name-only -r HEAD | grep -q '^reports/'; then
+  cd "$ROOT"
+  echo "post-commit: reports/ changed → rebuilding _site/"
+  scripts/reports build
+fi
