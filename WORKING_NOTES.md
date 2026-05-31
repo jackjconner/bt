@@ -3,9 +3,17 @@
 ## Where we are
 DONE. Every module taken POC → production. `PRODUCTION_PLAN.md` holds the
 per-module feature plans + unique schema list. Built: synthetic data layer
-(`etl/schema.py`, `etl/datasets.py` — 31 datasets, schema-validated) and the
-production features in all 7 modules, wired end-to-end in `pipeline.py` and
-`main.py`. 440 tests pass, ruff clean.
+(`etl/schema.py`, `etl/datasets.py` — 31 datasets, schema-validated), the
+production features in all 7 modules (`pipeline.py` wires them e2e), and a
+component profiling harness + integration suite:
+- `harness/` — `ComponentBenchmark` per module, `runner.run_harness` drives a
+  GenSpec grid through `profiling.run_trials`, persists to parquet, fits
+  scaling curves, optional regression-vs-baseline. Dogfoods the profiling
+  module. `main.py` runs it after the pipeline.
+- `tests/integration/` — per-component contract tests + full e2e + harness
+  smoke; root `conftest.py` enables nested-test imports.
+458 tests pass, ruff clean. `uv run main.py` runs scaling exp → pipeline →
+harness end-to-end.
 
 ## Active task
 None — all goal tasks complete. Two benign pytest warnings remain (ElasticNet
