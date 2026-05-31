@@ -40,7 +40,7 @@ from sklearn.preprocessing import StandardScaler
 
 from .panel import PanelArrays
 from .ridge import ModelResult
-from .scoring import held_out_r2, ic_stats, rank_ic_score, rank_ic_series
+from .scoring import held_out_r2, ic_stats, rank_ic_series
 
 # --------------------------------------------------------------------------- #
 # FoldScaler
@@ -303,10 +303,16 @@ def _score_fold(
 
     Returns ``(test_r2, test_ic, ic_values)`` where ``ic_values`` is the
     per-date Spearman ρ array used to accumulate the aggregate IC stats.
+
+    ``rank_ic_series`` is called once; ``test_ic`` (the fold's mean IC) is
+    derived directly from the returned per-date values.  The previous
+    implementation called ``rank_ic_score`` (which calls ``rank_ic_series``
+    internally) and then called ``rank_ic_series`` again, duplicating the
+    O(n_test_dates) Spearman computation per fold.
     """
     test_r2 = held_out_r2(y_te, preds)
-    test_ic = rank_ic_score(y_te, preds, grp_te)
     _, ic_values = rank_ic_series(y_te, preds, grp_te)
+    test_ic = float(ic_values.mean()) if len(ic_values) > 0 else 0.0
     return test_r2, test_ic, ic_values
 
 
