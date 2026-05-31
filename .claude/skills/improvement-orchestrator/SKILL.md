@@ -59,6 +59,28 @@ keeps the oracle around through review. A fallback/oracle still genuinely *used*
 scan recent `IMPROVEMENTS.md` entries for an additive replacement whose old path
 is now dead.
 
+**Per-feature default state.** Every feature ships behind a flag — but whether that
+flag **defaults on or off is a deliberate per-feature decision, not a reflex.** When
+proposing the feature slate, name a default for each with a rationale and get Jack's
+sign-off; record the choice in the round report + `IMPROVEMENTS.md`.
+
+- **off by default** (dormant) — the conservative choice: the golden stays
+  byte-identical, the capability is proven under test, and a *later* deliberate round
+  flips it on. Required when turning it on would **move the golden** (a behavior
+  change) or alter a **consumed contract** (a frame shape another component reads).
+- **on by default** — only when justified, and it splits two ways: (a) the feature is
+  pure additive observability that moves **no** existing golden number (a new
+  field/column nothing yet consumes) → on-by-default is fine with Jack's ok, gated by
+  `--allow-new-fields` + a golden re-save to absorb the new field; (b) it **does**
+  move the golden → that is a **correctness decision**, not additive growth: Jack
+  approves it like an exploit accuracy-move, the golden is re-saved, and the writeup
+  justifies why the new number is *more* correct. Never flip a golden-moving feature
+  on by default without that sign-off + justification.
+
+The default is part of the worker's brief — the worker implements the flag; *you* set
+which way it defaults. (Round 007 shipped all features off-by-default by decision;
+several now sit dormant awaiting an activation round — see `WORKING_NOTES.md`.)
+
 **The explore tournament.** Run it as plain parallel `Agent` dispatch that you
 supervise — no workflow runner, so worktree isolation and cleanup stay under your
 control. Given a target and K (3–4) deliberately *divergent* strategy briefs
@@ -95,7 +117,9 @@ is the difference between a clean round and a capsized one. See [[workspace-isol
    - `feature` — run a fan-out **ideation** sub-step: agents score candidate
      capabilities against `VISION.md` + `PRODUCTION_PLAN.md` tier-2/3 and append
      `queued` rows to `FEATURE_BACKLOG.md`; build the **top Jack-prioritized**
-     item. The "metric" is the new capability working under test.
+     item. The "metric" is the new capability working under test. **Decide each
+     feature's default state** (see Per-feature default state) and get Jack's
+     sign-off before dispatch.
    - `explore` — pick the incumbent to challenge and draft K divergent strategy
      briefs (see The explore tournament).
    **Dedup against `IMPROVEMENTS.md`** (and `FEATURE_BACKLOG.md` for features): if
