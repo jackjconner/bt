@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 import numpy as np
 import polars as pl
 
 from .adjust import (
     _adjust_single_asset,
+    _adjust_vectorized,
     _apply_factor,
     _build_adj_log,
     _dividend_factor,
@@ -20,8 +21,6 @@ from .adjust import (
 def _prices(close_vals: list[float], asset_id: int = 0) -> pl.DataFrame:
     n = len(close_vals)
     base_date = date(2020, 1, 2)
-    from datetime import timedelta
-
     dates = [base_date + timedelta(days=i) for i in range(n)]
     return pl.DataFrame(
         {
@@ -325,3 +324,162 @@ def test_special_dividend_treated_as_cash_dividend():
     assert abs(adj[1] - 10.0 * expected_factor) < 1e-9
     # On/after ex_date: unchanged
     assert abs(adj[2] - 9.5) < 1e-9
+
+
+# ------------------------------------------------------------------ #
+# Vectorized whole-panel path (_adjust_vectorized, used by adjust_prices)
+# ------------------------------------------------------------------ #
+
+
+def _ca_full(rows: list[dict]) -> pl.DataFrame:
+    """Build a corporate_actions frame with the full registry schema."""
+    if not rows:
+        return _no_actions()
+    return pl.DataFrame(
+        {
+            "ex_date": pl.Series([r["ex_date"] for r in rows], dtype=pl.Date),
+            "id": pl.Series([r["id"] for r in rows], dtype=pl.Int64),
+            "action_type": pl.Series([r["action_type"] for r in rows], dtype=pl.Categorical),
+            "split_ratio": pl.Series([r.get("split_ratio") for r in rows], dtype=pl.Float64),
+            "cash_amount": pl.Series([r.get("cash_amount") for r in rows], dtype=pl.Float64),
+            "currency": pl.Series(["USD"] * len(rows), dtype=pl.Categorical),
+            "new_id": pl.Series([None] * len(rows), dtype=pl.Int64),
+        }
+    )
+
+
+def _legacy_oracle(
+    prices: pl.DataFrame, ca: pl.DataFrame, close_col: str = "close"
+) -> pl.DataFrame:
+    """Reference adjusted frame via the retained per-asset path."""
+    ca_rel = ca.filter(
+        pl.col("action_type").cast(pl.String).is_in(["split", "cash_dividend", "special_dividend"])
+    ).sort("ex_date")
+    frames = []
+    for part in prices.sort(["id", "date"]).partition_by("id", maintain_order=True):
+        aid = int(part["id"][0])
+        acts = ca_rel.filter(pl.col("id") == aid)
+        frame, _ = _adjust_single_asset(part, acts if not acts.is_empty() else None, close_col)
+        frames.append(frame)
+    return pl.concat(frames).sort("date", "id")
+
+
+def _random_panel(n_assets: int, n_dates: int, seed: int) -> pl.DataFrame:
+    rng = np.random.default_rng(seed)
+    base = date(2020, 1, 1)
+    dates = [base + timedelta(days=i) for i in range(n_dates)]
+    rows_date, rows_id, rows_close = [], [], []
+    for aid in range(n_assets):
+        prices = 50.0 * np.cumprod(1.0 + rng.normal(0.0, 0.02, n_dates))
+        for i, d in enumerate(dates):
+            rows_date.append(d)
+            rows_id.append(aid)
+            rows_close.append(float(prices[i]))
+    return pl.DataFrame(
+        {
+            "date": pl.Series(rows_date, dtype=pl.Date),
+            "id": pl.Series(rows_id, dtype=pl.Int64),
+            "close": pl.Series(rows_close, dtype=pl.Float64),
+        }
+    )
+
+
+def test_vectorized_matches_legacy_oracle_random():
+    """Whole-panel vectorized adjust == per-asset legacy path, cell for cell."""
+    prices = _random_panel(n_assets=12, n_dates=40, seed=7)
+    base = date(2020, 1, 1)
+    rng = np.random.default_rng(99)
+    rows = []
+    for _ in range(20):
+        aid = int(rng.integers(0, 12))
+        ex = base + timedelta(days=int(rng.integers(0, 40)))
+        if rng.random() < 0.5:
+            rows.append({"ex_date": ex, "id": aid, "action_type": "split", "split_ratio": 2.0})
+        else:
+            rows.append(
+                {"ex_date": ex, "id": aid, "action_type": "cash_dividend", "cash_amount": 0.4}
+            )
+    ca = _ca_full(rows)
+    got = _adjust_vectorized(prices, ca, "close").prices.sort("date", "id")
+    want = _legacy_oracle(prices, ca).sort("date", "id")
+    np.testing.assert_allclose(
+        got["adj_close"].to_numpy(), want["adj_close"].to_numpy(), rtol=1e-9, atol=1e-9
+    )
+
+
+def test_vectorized_two_splits_same_asset_compound():
+    """Two splits on one asset compound multiplicatively on prior history."""
+    prices = _prices([12.0, 12.0, 6.0, 6.0, 2.0])  # dates Jan 2..6
+    ca = _ca_full(
+        [
+            {"ex_date": date(2020, 1, 4), "id": 0, "action_type": "split", "split_ratio": 2.0},
+            {"ex_date": date(2020, 1, 6), "id": 0, "action_type": "split", "split_ratio": 3.0},
+        ]
+    )
+    adj = adjust_prices(prices, ca).prices.sort("date")["adj_close"].to_numpy()
+    # Before Jan 4: both splits apply → factor 1/6.
+    assert abs(adj[0] - 12.0 / 6.0) < 1e-9
+    assert abs(adj[1] - 12.0 / 6.0) < 1e-9
+    # Jan 4 and Jan 5 (>= first split, < second): only the 3-for-1 applies → 1/3.
+    assert abs(adj[2] - 6.0 / 3.0) < 1e-9
+    assert abs(adj[3] - 6.0 / 3.0) < 1e-9
+    # Jan 6 (>= both ex_dates): unchanged.
+    assert abs(adj[4] - 2.0) < 1e-9
+
+
+def test_vectorized_tail_action_after_last_session():
+    """An ex_date after the asset's last session back-adjusts the whole segment."""
+    prices = _prices([10.0, 10.0, 10.0])  # Jan 2..4
+    ca = _ca_full(
+        [{"ex_date": date(2020, 2, 1), "id": 0, "action_type": "split", "split_ratio": 2.0}]
+    )
+    adj = adjust_prices(prices, ca).prices.sort("date")["adj_close"].to_numpy()
+    np.testing.assert_allclose(adj, [5.0, 5.0, 5.0], rtol=0, atol=1e-9)
+
+
+def test_vectorized_tail_action_not_logged_when_no_factor_change_is_logged():
+    """A tail action with a real factor IS recorded in the audit log."""
+    prices = _prices([10.0, 10.0])
+    ca = _ca_full(
+        [{"ex_date": date(2020, 3, 1), "id": 0, "action_type": "split", "split_ratio": 2.0}]
+    )
+    result = adjust_prices(prices, ca)
+    assert result.adj_log.height == 1
+    assert abs(result.adj_log["factor"][0] - 0.5) < 1e-12
+
+
+def test_vectorized_action_before_first_session_not_applied_or_logged():
+    """ex_date before the first price has no prior row: no change, no log entry."""
+    prices = _prices([10.0, 11.0])  # Jan 2, Jan 3
+    ca = _ca_full(
+        [{"ex_date": date(2019, 1, 1), "id": 0, "action_type": "split", "split_ratio": 2.0}]
+    )
+    result = adjust_prices(prices, ca)
+    np.testing.assert_array_equal(result.prices.sort("date")["adj_close"].to_numpy(), [10.0, 11.0])
+    assert result.adj_log.is_empty()
+
+
+def test_vectorized_asset_without_actions_untouched_amid_others():
+    """An asset with no actions is unaffected by a split on a neighbour id."""
+    p0 = _prices([10.0, 10.0, 5.0], asset_id=0)
+    p1 = _prices([20.0, 21.0, 22.0], asset_id=1)
+    prices = pl.concat([p0, p1])
+    ca = _ca_full(
+        [{"ex_date": date(2020, 1, 4), "id": 0, "action_type": "split", "split_ratio": 2.0}]
+    )
+    result = adjust_prices(prices, ca)
+    a1 = result.prices.filter(pl.col("id") == 1).sort("date")["adj_close"].to_numpy()
+    np.testing.assert_array_equal(a1, [20.0, 21.0, 22.0])
+
+
+def test_vectorized_log_schema_matches_builder():
+    """adj_log carries the documented dtypes regardless of which path built it."""
+    prices = _prices([10.0, 10.0, 5.0])
+    ca = _ca_full(
+        [{"ex_date": date(2020, 1, 4), "id": 0, "action_type": "split", "split_ratio": 2.0}]
+    )
+    log = adjust_prices(prices, ca).adj_log
+    empty = _build_adj_log([])
+    assert log.schema["id"] == empty.schema["id"]
+    assert log.schema["action_type"] == empty.schema["action_type"]
+    assert log.schema["factor"] == empty.schema["factor"]
