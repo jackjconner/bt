@@ -57,11 +57,11 @@ PR:       #36
 note:     Σ = B·F·Bᵀ + D is now a lazy cached `.cov` property — the dense n×n object never lands on the build/optimizer hot path (variance/contribs go through the factored form B(F(Bᵀw))+specific_var⊙w); build_from_long vectorized (np.unique/searchsorted, no iter_rows). The explore round was dispatched via the Workflow tool, which spawned unsupervised worktree copies that exhausted tmpfs and capsized the run before the judge ran; one worker's rewrite (the wide-layout/lazy-Σ direction) was salvaged, re-reviewed, and individually gated. Workflow-tool tournaments retired in favor of supervised Agent dispatch (DECISIONS.md). Report: reports/round-004/portfolio.md.
 
 ## 2026-05-31 — round 005: multi-component explore (one bold rewrite per component)  [accepted ×4]
-type:     explore (5 components dispatched in parallel — analysis/etl/models/signals merged; backtest in flight at time of writing)
+type:     explore (5 components dispatched in parallel — all 5 merged: analysis/etl/models/signals/backtest)
 metric:   see per-component entries below
-eval:     all four hold the golden — re-validated together post-merge: full suite 1215 passed/1 skipped, evalgate 17/17
-PR:       #38 #39 #41 #42
-note:     First successful supervised multi-component explore round. Each worker ran in its own worktree with diskguard + the bench lock; the committer worker-isolation guard (refuse component commits from the primary worktree) was added mid-round after several workers' cwd slipped into the main checkout. Reports: reports/round-005/{analysis,etl,models,signals}.md. Baseline ratchet deferred until backtest lands → one consolidated re-baseline.
+eval:     all five hold the golden — re-validated together post-merge: full suite 1227 passed/1 skipped, evalgate 17/17
+PR:       #38 #39 #41 #42 #44
+note:     First successful supervised multi-component explore round — 5/5 wins, no spikes. Each worker ran in its own worktree with diskguard + the bench lock; the committer worker-isolation guard (refuse component commits from the primary worktree) was added mid-round after several workers' cwd slipped into the main checkout (the hardened backtest re-dispatch then stayed perfectly isolated). Reports: reports/round-005/{analysis,etl,models,signals,backtest}.md. Baseline ratcheted on the merged 5/5 tree (post-round harness run); etl now n_dates^0.75, analysis n_dates^0.20.
 
 ## 2026-05-31 — analysis: fuse metrics suite into single-pass engine  [accepted]
 type:     explore
@@ -90,3 +90,10 @@ metric:   signals p50 — median 248.6 → 128.7 ms (−48.3%); all 11 grid poin
 eval:     golden held — ic_raw / ic_neutralized / horizon_ic[*] bit-identical (0.00e+00)
 PR:       #42
 note:     a long-format group_by rank-IC replaces the dense pivot + scipy.rankdata path (Spearman = Pearson on within-date ranks; Polars rank "average" tie-default matches scipy); default engine="lazy", incumbent engine="matrix" retained; +19 bit-identity tests. Report: reports/round-005/signals.md.
+
+## 2026-05-31 — backtest: vectorized weight-space fast path for the production envelope  [accepted]
+type:     explore
+metric:   backtest p50 — median 41.21 → 33.27 ms (1.24×); 1.13–1.24× on the n_dates axis, wash at largest n_assets (irreducible sequential cost loop)
+eval:     golden held — path-dependent fields byte-exact: gross_sharpe 8.88e-16, net_sharpe 3.22e-15, cost_drag 2.33e-10 (last-ULP float reassociation)
+PR:       #44
+note:     hoist softmax / constraints / weight-drift / portfolio-return out of the Python event loop into batched NumPy; only the NAV/cost recurrence stays scalar; incumbent loop retained for non-fast-path envelopes; +12 byte-identity tests. The resumed draft had a blocking object-ndarray→Date cast bug, fixed by returning plain lists through _assemble_result. Report: reports/round-005/backtest.md.
