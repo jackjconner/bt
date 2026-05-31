@@ -8,7 +8,11 @@ import numpy as np
 import polars as pl
 import pytest
 
-from portfolio.risk_model import FactorRiskModel, build_from_long
+from portfolio.risk_model import (
+    FactorRiskBreakdown,
+    FactorRiskModel,
+    build_from_long,
+)
 
 
 @pytest.fixture
@@ -60,6 +64,57 @@ class TestFactorRiskModel:
         fcc = small_model.factor_component_contrib(weights)
         fac_var = small_model.factor_variance(weights)
         assert abs(fcc.sum() - fac_var) < 1e-10
+
+    def test_factor_risk_breakdown_total_equals_components(self, small_model, weights):
+        """factor + specific variance must sum to total variance."""
+        bd = small_model.factor_risk_breakdown(weights)
+        assert isinstance(bd, FactorRiskBreakdown)
+        assert abs(bd.total_variance - (bd.factor_variance + bd.specific_variance)) < 1e-12
+
+    def test_factor_risk_breakdown_matches_scalar_helpers(self, small_model, weights):
+        """Breakdown fields must match the lower-level scalar helpers exactly."""
+        bd = small_model.factor_risk_breakdown(weights)
+        assert bd.total_variance == small_model.portfolio_variance(weights)
+        assert bd.factor_variance == small_model.factor_variance(weights)
+        assert bd.specific_variance == small_model.specific_variance(weights)
+
+    def test_factor_risk_breakdown_per_factor_sums_to_factor_variance(self, small_model, weights):
+        """Per-factor contributions must sum to the factor variance."""
+        bd = small_model.factor_risk_breakdown(weights)
+        n_factors = small_model.B.shape[1]
+        assert bd.factor_contrib.shape == (n_factors,)
+        assert abs(bd.factor_contrib.sum() - bd.factor_variance) < 1e-12
+
+    def test_factor_risk_breakdown_reuses_factor_component_contrib(self, small_model, weights):
+        """Per-factor contributions must equal factor_component_contrib (no dup)."""
+        bd = small_model.factor_risk_breakdown(weights)
+        np.testing.assert_array_equal(
+            bd.factor_contrib, small_model.factor_component_contrib(weights)
+        )
+
+    def test_factor_risk_breakdown_matches_dense_analytic_form(self, small_model, weights):
+        """Breakdown must match the explicit factored (B F Bᵀ + D) decomposition."""
+        w = weights
+        B, F, sv = small_model.B, small_model.factor_cov, small_model.specific_var
+        factor_var_dense = float(w @ (B @ F @ B.T) @ w)
+        specific_var_dense = float(w @ np.diag(sv) @ w)
+        bd = small_model.factor_risk_breakdown(w)
+        assert abs(bd.factor_variance - factor_var_dense) < 1e-10
+        assert abs(bd.specific_variance - specific_var_dense) < 1e-10
+        assert abs(bd.total_variance - (factor_var_dense + specific_var_dense)) < 1e-10
+
+    def test_factor_risk_breakdown_fractions_sum_to_one(self, small_model, weights):
+        """factor_fraction + specific_fraction must sum to 1 for nonzero variance."""
+        bd = small_model.factor_risk_breakdown(weights)
+        assert abs(bd.factor_fraction + bd.specific_fraction - 1.0) < 1e-12
+
+    def test_factor_risk_breakdown_zero_weights(self, small_model):
+        """All-zero weights give zero variance and zero (not NaN) fractions."""
+        n = small_model.B.shape[0]
+        bd = small_model.factor_risk_breakdown(np.zeros(n))
+        assert bd.total_variance == 0.0
+        assert bd.factor_fraction == 0.0
+        assert bd.specific_fraction == 0.0
 
     def test_zero_specific_risk_variance_is_factor_only(self):
         rng = np.random.default_rng(1)
