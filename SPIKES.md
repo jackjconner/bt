@@ -28,14 +28,11 @@ PR:        <url or #number, if a winner merged>
 
 ---
 
-## EXAMPLE (template — delete when the first real explore round lands)
-
-## 2026-05-31 — explore: signals IC engine — lazy vs eager Polars (K=3)  [winner: none]
-target:    `signals.ic_series_v2` eager pipeline; metric = signals harness p50 (currently ~200ms), quality = readability
+## 2026-05-31 — explore: portfolio FactorRiskModel.build (K=3)  [winner: wide-layout — salvaged, not judged]
+target:    `portfolio.risk_model.build_from_long` / `FactorRiskModel.build` — ~54% of portfolio time + residual ^1.74 memory; challenge runtime AND the super-linear memory while holding Σ semantics.
 strategies:
-  - lazy-scan: rewrite the whole IC path as one `LazyFrame` query, let Polars optimize → PASS gates, p50 198ms (tie, no win)
-  - numpy-core: drop to numpy for the per-date rankdata inner, Polars only for I/O → PASS gates, p50 171ms (−14%, win)
-  - arrow-compute: pyarrow.compute kernels for the cross-sectional rank → FAIL correctness (rank-tie handling moved horizon_ic[5])
-verdict:   merged numpy-core (strict win) — see IMPROVEMENTS.md type: explore
-frontier:  lazy rewrite ties eager here (query is already single-pass) — park it; the win is in the rankdata inner, not the frame engine. arrow kernels break Spearman tie semantics — dead end for IC until they match scipy's average-rank.
-PR:        #00 (example)
+  - lazy-polars: fuse the whole factor-cov build into one `LazyFrame` query → NO RESULT (round aborted before completion)
+  - numpy-sparse: assemble Σ = BFBᵀ+D with scipy.sparse, never holding the dense long frame → NO RESULT (round aborted)
+  - wide-layout: pivot long→wide once, matrix-native build + lazy dense Σ → in-progress rewrite SALVAGED; later re-gated solo → 18–112× build, peak mem n²→flat, golden held. Merged as PR #36.
+verdict:   no clean tournament — the run was aborted mid-flight (see frontier); the wide-layout worker's in-progress rewrite was salvaged and adjudicated as a standalone perf change, not as a judged winner. The other two strategies produced no comparable result.
+frontier:  **Process, not algorithm.** The tournament was dispatched via the Workflow tool with worktree isolation; it spawned 3 unsupervised repo copies that each ran the harness into a RAM-backed /tmp (tmpfs), exhausted it, and capsized the run before the judge — cascading into git SIGABRT and a dead shell (DECISIONS.md: heavy temp off tmpfs). Lessons: (1) run explore rounds as **supervised Agent dispatch**, never the Workflow runner — `explore-tournament.js` was removed; (2) `source scripts/diskguard` before any round so heavy temp lands on disk. The lazy-Σ / factored-variance direction is a confirmed win and is now the incumbent; a *clean* re-run could still compare lazy-polars vs numpy-sparse against it, but the dense-Σ removal is the headline and is banked.

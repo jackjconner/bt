@@ -19,8 +19,8 @@ climbing to 376 MB at 3000 assets), with the optimizer's numbers byte-identical.
 > (a K=3 divergent tournament on `FactorRiskModel.build`). The round itself was
 > abandoned after a tooling incident — the Workflow runner spawned unsupervised
 > worktree copies that exhausted tmpfs — but one worker's rewrite was sound. It
-> was reviewed and re-gated from scratch and shipped as **PR #36** (open, awaiting
-> merge). See `DECISIONS.md` (heavy temp off tmpfs) and `SPIKES.md`.
+> was reviewed and re-gated from scratch and shipped as **PR #36** (merged into
+> `main`). See `DECISIONS.md` (heavy temp off tmpfs) and `SPIKES.md`.
 
 ## What it addressed
 
@@ -105,7 +105,7 @@ Correctness gates: `ty` ✓ · `ruff` ✓ · `pytest -q portfolio/ tests/integra
 → **401 passed**. Downstream: the optimizer reads B / F_cov / D unchanged, so the
 constructed portfolio is identical.
 
-Provisional `IMPROVEMENTS.md` entry (lands when PR #36 merges):
+`IMPROVEMENTS.md` entry (merged, post-merge re-validation: pytest 401 passed, golden held):
 
 ```
 ## 2026-05-31 — portfolio: lazy-materialize Σ + vectorize build_from_long  [accepted]
