@@ -128,6 +128,111 @@ def _check_spike_outliers(
     )
 
 
+QUALITY_FLAG_COLUMNS: tuple[str, ...] = (
+    "is_duplicate_key",
+    "is_frozen_series",
+    "sparse_coverage",
+    "price_stale",
+    "outlier_flagged",
+)
+
+
+def annotate_quality_flags(
+    df: pl.DataFrame,
+    value_col: str,
+    *,
+    expected_dates: list[date] | None = None,
+    expected_ids: list[int] | None = None,
+    spike_z_threshold: float = 10.0,
+) -> pl.DataFrame:
+    """Append per-row boolean data-quality flags to a ``(date, id, value)`` frame.
+
+    This is the row-level view of :func:`check`: it runs the very same
+    :class:`QualityReport` scan and projects each finding back onto the panel
+    as a boolean column, so a downstream consumer can filter or weight rows by
+    quality without re-deriving the checks.  The original columns are returned
+    unchanged and in their original order; the flag columns are appended after
+    them.  Row count and row order are preserved.
+
+    Flags (all ``Boolean``, never null):
+
+    ``is_duplicate_key``
+        The row's ``(date, id)`` key appears more than once in ``df``
+        (``QualityReport.duplicate_keys``).
+    ``is_frozen_series``
+        The row's ``id`` has zero variance over the window — a flat/frozen
+        feed (``QualityReport.frozen_series``).
+    ``sparse_coverage``
+        The row's ``id`` is missing at least one expected session
+        (``QualityReport.missing_sessions``).  Always ``False`` when
+        ``expected_dates``/``expected_ids`` are not supplied (the
+        missing-session check is skipped).
+    ``price_stale``
+        ``value_col`` equals the same ``id``'s value on its previous
+        observation (sorted by ``date``).  The first observation of each ``id``
+        has no prior and defaults to ``False`` (not stale).
+    ``outlier_flagged``
+        The row is a cross-sectional ``value_col`` outlier with
+        ``|z| > spike_z_threshold`` (``QualityReport.spike_outliers``).
+
+    Parameters mirror :func:`check`.  Returns a new frame; ``df`` is not
+    mutated.
+    """
+    report = check(
+        df,
+        value_col,
+        expected_dates=expected_dates,
+        expected_ids=expected_ids,
+        spike_z_threshold=spike_z_threshold,
+    )
+
+    dup_keys = report.duplicate_keys.select("date", "id").with_columns(
+        pl.lit(True).alias("is_duplicate_key")
+    )
+    frozen_ids = report.frozen_series.select("id").with_columns(
+        pl.lit(True).alias("is_frozen_series")
+    )
+    sparse_ids = (
+        report.missing_sessions.select("id")
+        .unique()
+        .with_columns(pl.lit(True).alias("sparse_coverage"))
+    )
+    outliers = report.spike_outliers.select("date", "id").with_columns(
+        pl.lit(True).alias("outlier_flagged")
+    )
+
+    # price_stale: value unchanged from the same id's previous observation.
+    # First observation per id has no prior → not stale.
+    annotated = (
+        df.with_row_index("_orig_order")
+        .sort("id", "date", maintain_order=True)
+        .with_columns(
+            (pl.col(value_col) == pl.col(value_col).shift(1).over("id"))
+            .fill_null(value=False)
+            .alias("price_stale")
+        )
+        .sort("_orig_order")
+        .drop("_orig_order")
+    )
+
+    annotated = (
+        annotated.join(dup_keys, on=["date", "id"], how="left")
+        .join(frozen_ids, on="id", how="left")
+        .join(sparse_ids, on="id", how="left")
+        .join(outliers, on=["date", "id"], how="left")
+    )
+
+    annotated = annotated.with_columns(
+        pl.col("is_duplicate_key").fill_null(value=False),
+        pl.col("is_frozen_series").fill_null(value=False),
+        pl.col("sparse_coverage").fill_null(value=False),
+        pl.col("outlier_flagged").fill_null(value=False),
+    )
+
+    # Original columns unchanged and first, flags appended in documented order.
+    return annotated.select(*df.columns, *QUALITY_FLAG_COLUMNS)
+
+
 def check(
     df: pl.DataFrame,
     value_col: str,

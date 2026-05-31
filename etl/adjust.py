@@ -38,6 +38,8 @@ from dataclasses import dataclass
 import numpy as np
 import polars as pl
 
+from .quality import annotate_quality_flags
+
 
 @dataclass(frozen=True)
 class AdjustmentResult:
@@ -69,6 +71,7 @@ def adjust_prices(
     corporate_actions: pl.DataFrame,
     *,
     close_col: str = "close",
+    include_quality_flags: bool = False,
 ) -> AdjustmentResult:
     """Back-adjust ``close_col`` for splits and cash dividends.
 
@@ -84,11 +87,18 @@ def adjust_prices(
     close_col:
         Name of the price column to adjust.  Other OHLC columns are scaled by
         the same factor so ratios (high/low spread) are preserved.
+    include_quality_flags:
+        When ``True``, append the per-row data-quality flag columns produced by
+        :func:`etl.quality.annotate_quality_flags` (computed on the *raw*
+        ``close_col``) to ``AdjustmentResult.prices``.  Off by default: the
+        returned frame is then byte-identical to the no-flag path — existing
+        consumers see no new columns and no reshaping.
 
     Returns
     -------
     AdjustmentResult
-        ``prices`` is the input frame extended with ``adj_close``.  The
+        ``prices`` is the input frame extended with ``adj_close`` (and, when
+        ``include_quality_flags`` is set, the quality-flag columns).  The
         adjusted column back-adjusts so the most recent close equals the raw
         close.  ``adj_log`` records each applied factor for audit purposes.
 
@@ -102,7 +112,11 @@ def adjust_prices(
     over the sorted long frame.  This scales with the *number of actions* rather
     than the *number of assets*.
     """
-    return _adjust_vectorized(prices, corporate_actions, close_col)
+    result = _adjust_vectorized(prices, corporate_actions, close_col)
+    if not include_quality_flags:
+        return result
+    flagged = annotate_quality_flags(result.prices, close_col)
+    return AdjustmentResult(prices=flagged, adj_log=result.adj_log)
 
 
 def _adjust_vectorized(
