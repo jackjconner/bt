@@ -10,7 +10,7 @@ from analysis import BacktestAnalyzerImpl
 from backtest import BacktestConfig, BacktestEngine, SignalFrame
 from etl import BatchLoader, ETLConfig, StreamLoader, write_parquet
 from etl.datasets import GenSpec
-from harness import print_harness_report, run_harness
+from harness import AgentContext, print_harness_report, run_harness
 from models import CVConfig, ModelConfig, cv_loop
 from pipeline import print_pipeline_summary, run_production_pipeline
 from portfolio import (
@@ -129,9 +129,25 @@ def main() -> None:
         finally:
             shutil.rmtree(pipe_dir, ignore_errors=True)
 
+        history_dir = Path.cwd() / ".oversight" / "history"
+        history_dir.mkdir(parents=True, exist_ok=True)
+        agent_ctx = AgentContext(
+            agent_id="main",
+            goal="manual profiling sweep across all components",
+            strategy="run full HARNESS_GRID, record baseline measurements",
+        )
         harness_dir = Path(tempfile.mkdtemp(prefix="bt_harness_"))
         try:
-            print_harness_report(run_harness(HARNESS_GRID, harness_dir, n_trials=3, warmup=1))
+            print_harness_report(
+                run_harness(
+                    HARNESS_GRID,
+                    harness_dir,
+                    n_trials=3,
+                    warmup=1,
+                    history_dir=history_dir,
+                    agent_ctx=agent_ctx,
+                )
+            )
         finally:
             shutil.rmtree(harness_dir, ignore_errors=True)
     finally:
