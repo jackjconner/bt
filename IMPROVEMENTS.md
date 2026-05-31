@@ -2,15 +2,29 @@
 
 Append-only record of every component-improvement round — accepted *and*
 rejected. This is the loop's memory: the dedup source for round planning (don't
-re-attempt a recently-rejected target) and the audit trail of cumulative gains.
+re-attempt a recently-rejected target), the **explore-cadence** source (count
+rounds since the last `type: explore`), and the audit trail of cumulative gains.
 Recorded by the `improvement-orchestrator` skill. Newest entries at the bottom.
+
+Every round declares a **`type`** (see `improvement-orchestrator` → Round types):
+
+- `exploit` — minimal-diff perf/accuracy win on a hotspot (the original loop).
+- `refactor` — structural cleanup, no behavior change; golden byte-identical.
+- `feature` — additive new capability behind a flag; golden holds, new fields ok.
+- `explore` — bold rewrite via K-way tournament; the merged winner is recorded
+  here, the discarded attempts in `SPIKES.md`.
+
+Verdicts: `accepted` (merged), `rejected` (no PR passed its type's gate), or
+`spiked` (an explore round where every attempt was discarded — learning logged in
+`SPIKES.md`, nothing merged).
 
 Format (one block per round, never edited after writing):
 
 ```
-## <date> — <component>: <one-line target>  [accepted | rejected]
-metric:   <name> — <before> → <after> (<delta>)
-eval:     golden unchanged within <tol>  |  accuracy moved: <field before→after, why correct>
+## <date> — <component>: <one-line target>  [accepted | rejected | spiked]
+type:     exploit | refactor | feature | explore
+metric:   <name> — <before> → <after> (<delta>)   # or "n/a (feature/refactor)"
+eval:     golden unchanged within <tol>  |  accuracy moved: <field before→after, why correct>  |  additive: <new fields>
 PR:       <url or #number>
 note:     <why accepted, or which gate rejected it and the takeaway>
 ```
