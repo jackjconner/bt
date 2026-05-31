@@ -165,6 +165,35 @@ def _anchored_two_axis_measurements() -> pl.DataFrame:
     )
 
 
+def _memory_measurements(n_points: int = 4) -> pl.DataFrame:
+    """elapsed/result/traced each scale linearly with n_assets (slope ≈ 1)."""
+    n_assets_vals = np.array([100, 200, 400, 800], dtype=float)[:n_points]
+    return pl.DataFrame(
+        {
+            "stage": pl.Series(["models"] * n_points, dtype=pl.Categorical),
+            "param_point_id": list(range(n_points)),
+            "n_assets": n_assets_vals.astype(int).tolist(),
+            "n_dates": [252] * n_points,
+            "n_features": [10] * n_points,
+            "n_factors": [4] * n_points,
+            "elapsed_s": (0.001 * n_assets_vals).tolist(),
+            "result_mb": (0.5 * n_assets_vals).tolist(),
+            "peak_traced_mb": (2.0 * n_assets_vals).tolist(),
+            "peak_rss_mb": (250.0 + 0.01 * n_assets_vals).tolist(),
+        }
+    )
+
+
+def test_fits_memory_metrics_by_default() -> None:
+    """result_mb and peak_traced_mb are fit by default when present."""
+    fits = fit_scaling(_memory_measurements(), run_id="test")
+    fit_keys = {(f.metric, f.scaling_dim) for f in fits}
+    assert ("result_mb", "n_assets") in fit_keys
+    assert ("peak_traced_mb", "n_assets") in fit_keys
+    result_fit = next(f for f in fits if f.metric == "result_mb" and f.scaling_dim == "n_assets")
+    assert result_fit.log_log_slope == pytest.approx(1.0, abs=0.05)
+
+
 def test_confounder_control_isolates_each_axis() -> None:
     """On a two-axis grid each dim's slope is fit holding the others at baseline."""
     fits = fit_scaling(_anchored_two_axis_measurements(), run_id="test")

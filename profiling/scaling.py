@@ -41,7 +41,7 @@ class ScalingFit:
 def fit_scaling(
     measurements: pl.DataFrame,
     run_id: str,
-    metrics: tuple[str, ...] = ("elapsed_s", "peak_rss_mb"),
+    metrics: tuple[str, ...] = ("elapsed_s", "result_mb", "peak_traced_mb", "peak_rss_mb"),
     scaling_dims: tuple[str, ...] = ("n_assets", "n_dates", "n_features", "n_factors"),
     min_points: int = 3,
 ) -> list[ScalingFit]:
