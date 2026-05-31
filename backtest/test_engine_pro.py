@@ -35,6 +35,20 @@ from backtest.constraints import (
 )
 from backtest.corporate import apply_corporate_actions, build_action_index
 from backtest.costs import compute_borrow_cost, compute_financing_cost, compute_transaction_costs
+from backtest.engine_pro import (
+    _accrue_daily_costs,
+    _apply_corporate_actions_at_bar,
+    _compute_fill_prices,
+    _compute_target_weights,
+    _init_state,
+    _mark_to_market,
+    _preprocess_inputs,
+    _rebalance_share_space,
+    _rebalance_weight_space,
+    _record_fill_log,
+    _resolve_weight_bounds,
+    _should_rebalance,
+)
 from backtest.slippage import compute_slippage, fill_price_with_slippage
 from etl.datasets import GenSpec, generate
 from etl.source import generate_returns
@@ -801,3 +815,534 @@ def test_financing_drag_equals_cumulative_deduction(returns_df, signals):
     nav_drop = res_base.nav_history["nav"][-1] - res_fin.nav_history["nav"][-1]
     # nav_drop ≈ financing_drag (differs slightly due to compounding); check sign.
     assert nav_drop >= -1e-6, "Financing cannot increase NAV vs baseline"
+
+
+# --------------------------------------------------------------------------- #
+# Extracted helper unit tests — pin the refactored private functions
+# --------------------------------------------------------------------------- #
+
+
+def test_preprocess_inputs_returns_none_for_absent_columns(prices_df):
+    """Columns not present in the provided frames must produce None matrices."""
+    mats = _preprocess_inputs(
+        prices=prices_df,
+        transaction_costs=None,
+        universe_mask=None,
+        borrow_rates=None,
+        n_dates=N_DATES,
+        n_assets=N_ASSETS,
+    )
+    assert mats["close"] is not None
+    assert mats["adv_20"] is not None
+    assert mats["commission_bps"] is None
+    assert mats["tradable"] is None
+    assert mats["borrow_rate_bps"] is None
+
+
+def test_preprocess_inputs_matrix_shape(prices_df, tx_costs_df):
+    """Dense matrices must have shape (n_dates, n_assets)."""
+    mats = _preprocess_inputs(
+        prices=prices_df,
+        transaction_costs=tx_costs_df,
+        universe_mask=None,
+        borrow_rates=None,
+        n_dates=N_DATES,
+        n_assets=N_ASSETS,
+    )
+    close = mats["close"]
+    commission = mats["commission_bps"]
+    assert close is not None and close.shape == (N_DATES, N_ASSETS)
+    assert commission is not None and commission.shape == (N_DATES, N_ASSETS)
+
+
+def test_resolve_weight_bounds_per_asset_overrides_scalar():
+    """Per-asset arrays take precedence over scalar config bounds."""
+    cfg = _cfg(min_weight=-0.1, max_weight=0.4)
+    per_asset_lb = np.full(N_ASSETS, -0.2)
+    per_asset_ub = np.full(N_ASSETS, 0.6)
+    lb, ub = _resolve_weight_bounds(cfg, N_ASSETS, per_asset_lb, per_asset_ub)
+    np.testing.assert_array_equal(lb, per_asset_lb)
+    np.testing.assert_array_equal(ub, per_asset_ub)
+
+
+def test_resolve_weight_bounds_scalar_broadcast():
+    """Scalar config bounds are broadcast to per-asset arrays of correct size."""
+    cfg = _cfg(min_weight=0.0, max_weight=0.25)
+    lb, ub = _resolve_weight_bounds(cfg, N_ASSETS, None, None)
+    assert lb is not None and len(lb) == N_ASSETS
+    assert ub is not None and len(ub) == N_ASSETS
+    assert (lb == 0.0).all()
+    assert (ub == 0.25).all()
+
+
+def test_resolve_weight_bounds_none_when_not_set():
+    """Both bounds are None when neither config nor per-asset arrays are provided."""
+    cfg = _cfg()
+    lb, ub = _resolve_weight_bounds(cfg, N_ASSETS, None, None)
+    assert lb is None
+    assert ub is None
+
+
+def test_init_state_weight_space():
+    """Without price accounting, shares is None and nav equals initial_cash."""
+    cfg = _cfg(enable_price_accounting=False)
+    shares, cash, nav = _init_state(cfg, close_mat=None, n_assets=N_ASSETS)
+    assert shares is None
+    assert cash == 0.0
+    assert nav == pytest.approx(cfg.initial_cash)
+
+
+def test_init_state_share_space(prices_df):
+    """With price accounting + close_mat, shares is zero and cash == nav == initial_cash."""
+    cfg = _cfg(enable_price_accounting=True)
+    # Build a dummy close_mat from the prices fixture.
+    mats = _preprocess_inputs(prices_df, None, None, None, N_DATES, N_ASSETS)
+    close_mat = mats["close"]
+    shares, cash, nav = _init_state(cfg, close_mat=close_mat, n_assets=N_ASSETS)
+    assert shares is not None
+    assert (shares == 0.0).all()
+    assert cash == pytest.approx(cfg.initial_cash)
+    assert nav == pytest.approx(cfg.initial_cash)
+
+
+def test_compute_target_weights_sums_to_one():
+    """Without constraints, target weights produced by softmax sum to 1."""
+    cfg = _cfg()
+    signal = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
+    target = _compute_target_weights(signal, cfg, tradable_t=None, lb=None, ub=None)
+    assert target.sum() == pytest.approx(1.0, abs=1e-9)
+
+
+def test_compute_target_weights_respects_universe_mask():
+    """Masked (untradeable) assets must receive zero weight."""
+    cfg = _cfg(enable_universe_mask=True)
+    signal = np.ones(N_ASSETS)
+    tradable = np.array([True, False, True, True, True])
+    target = _compute_target_weights(signal, cfg, tradable_t=tradable, lb=None, ub=None)
+    assert target[1] == pytest.approx(0.0)
+    assert target.sum() > 0.0
+
+
+def test_compute_target_weights_mask_ignored_when_feature_off():
+    """Universe mask is skipped when enable_universe_mask=False, even if tradable is supplied."""
+    cfg = _cfg(enable_universe_mask=False)
+    signal = np.ones(N_ASSETS)
+    tradable = np.zeros(N_ASSETS, dtype=bool)  # all untradeable — should be ignored
+    target = _compute_target_weights(signal, cfg, tradable_t=tradable, lb=None, ub=None)
+    # All assets get equal weight (mask not applied).
+    assert target.sum() == pytest.approx(1.0, abs=1e-9)
+    assert (target > 0).all()
+
+
+def test_mark_to_market_weight_space_nav_updates():
+    """In weight-space, NAV multiplies by (1 + portfolio_return)."""
+    weights = np.array([0.5, 0.5])
+    nav = 1_000_000.0
+    r = np.array([0.01, 0.03])  # 1% and 3% returns → portfolio return = 2%
+    _new_weights, _, new_nav, _ = _mark_to_market(
+        t=0, r=r, weights=weights, shares=None, nav=nav, cash=0.0, close_mat=None, n_dates=10
+    )
+    assert new_nav == pytest.approx(nav * 1.02)
+
+
+def test_mark_to_market_weight_space_weights_drift():
+    """After marking to market, weights reflect post-return drift."""
+    weights = np.array([0.5, 0.5])
+    r = np.array([0.0, 0.1])  # second asset grows 10%, first flat
+    new_weights, _, _, _ = _mark_to_market(
+        t=0, r=r, weights=weights, shares=None, nav=1.0, cash=0.0, close_mat=None, n_dates=10
+    )
+    # Second asset should now have higher weight.
+    assert new_weights[1] > new_weights[0]
+    assert new_weights.sum() == pytest.approx(1.0, abs=1e-9)
+
+
+def test_mark_to_market_share_space_nav_matches_shares_at_prices(prices_df):
+    """In share-space, NAV = shares @ new_close + cash after mark-to-market."""
+    mats = _preprocess_inputs(prices_df, None, None, None, N_DATES, N_ASSETS)
+    close_mat = mats["close"]
+    assert close_mat is not None
+    nav0 = 1_000_000.0
+    # Buy equal shares at bar 0 prices.
+    p0 = close_mat[0]
+    shares = np.full(N_ASSETS, nav0 / (N_ASSETS * p0[0]))  # rough equal shares
+    cash = 0.0
+    r = np.zeros(N_ASSETS)  # flat returns → NAV should be unchanged
+    _, new_shares, new_nav, _ = _mark_to_market(
+        t=0,
+        r=r,
+        weights=np.ones(N_ASSETS) / N_ASSETS,
+        shares=shares,
+        nav=nav0,
+        cash=cash,
+        close_mat=close_mat,
+        n_dates=N_DATES,
+    )
+    expected_nav = float(new_shares @ close_mat[0]) + cash
+    assert new_nav == pytest.approx(expected_nav, rel=1e-9)
+
+
+def test_accrue_daily_costs_no_features_returns_unchanged():
+    """With all cost features off, nav/cash/drag are returned unmodified."""
+    cfg = _cfg()
+    nav, cash, drag = _accrue_daily_costs(
+        t=5,
+        dates=[date(2000, 1, i + 3) for i in range(10)],
+        weights=np.array([0.5, 0.5]),
+        shares=None,
+        nav=1_000_000.0,
+        cash=0.0,
+        borrow_mat=None,
+        cfg=cfg,
+        cumulative_financing_drag=0.0,
+        dt_default=1.0 / 252.0,
+    )
+    assert nav == pytest.approx(1_000_000.0)
+    assert cash == pytest.approx(0.0)
+    assert drag == pytest.approx(0.0)
+
+
+def test_accrue_daily_costs_financing_increases_drag():
+    """Financing costs must increase cumulative_financing_drag and reduce nav."""
+    cfg = _cfg(enable_financing=True, borrow_rate_annual=0.1, funding_rate_annual=0.0)
+    dates_list = [date(2000, 1, 3), date(2000, 1, 4), date(2000, 1, 5)]
+    weights = np.array([0.5, -0.5])
+    nav_in = 1_000_000.0
+    nav, _cash, drag = _accrue_daily_costs(
+        t=0,
+        dates=dates_list,
+        weights=weights,
+        shares=None,
+        nav=nav_in,
+        cash=0.0,
+        borrow_mat=None,
+        cfg=cfg,
+        cumulative_financing_drag=0.0,
+        dt_default=1.0 / 252.0,
+    )
+    assert drag > 0.0
+    assert nav < nav_in
+
+
+def test_compute_fill_prices_no_slippage_equals_mid():
+    """Without slippage, fill prices must equal mid prices exactly."""
+    cfg = _cfg(enable_slippage=False)
+    mid = np.array([100.0, 200.0, 50.0])
+    adv = np.zeros(3)
+    impact = np.zeros(3)
+    result = _compute_fill_prices(
+        t=0,
+        target=np.array([0.4, 0.4, 0.2]),
+        weights=np.zeros(3),
+        nav=10_000.0,
+        mid_prices=mid,
+        adv_t=adv,
+        impact_t=impact,
+        cfg=cfg,
+    )
+    np.testing.assert_array_equal(result, mid)
+
+
+def test_compute_fill_prices_buys_above_sells_below_mid():
+    """With slippage: buying assets fills above mid, selling fills below mid."""
+    cfg = _cfg(enable_slippage=True)
+    mid = np.array([100.0, 100.0])
+    adv = np.array([1_000_000.0, 1_000_000.0])
+    impact = np.array([0.1, 0.1])
+    # Target: buy asset 0, sell asset 1
+    result = _compute_fill_prices(
+        t=0,
+        target=np.array([0.6, 0.0]),
+        weights=np.array([0.0, 0.5]),
+        nav=100_000.0,
+        mid_prices=mid,
+        adv_t=adv,
+        impact_t=impact,
+        cfg=cfg,
+    )
+    assert result[0] > 100.0, "Buying should fill above mid"
+    assert result[1] < 100.0, "Selling should fill below mid"
+
+
+def test_record_fill_log_appends_entries():
+    """Fill log lists must gain one entry per traded asset."""
+    share_deltas = np.array([10.0, 0.0, -5.0])
+    fill_prices = np.array([100.0, 50.0, 200.0])
+    trade_value = share_deltas * fill_prices
+    asset_ids = np.arange(3)
+    fill_dates: list = []
+    fill_ids: list = []
+    fill_shares_list: list = []
+    fill_prices_list: list = []
+    fill_costs_list: list = []
+    fill_slippage_list: list = []
+
+    _record_fill_log(
+        d=date(2000, 1, 3),
+        share_deltas=share_deltas,
+        fill_prices=fill_prices,
+        trade_value=trade_value,
+        tc_cost=10.0,
+        slip_cost=5.0,
+        asset_ids=asset_ids,
+        fill_dates=fill_dates,
+        fill_ids=fill_ids,
+        fill_shares_list=fill_shares_list,
+        fill_prices_list=fill_prices_list,
+        fill_costs_list=fill_costs_list,
+        fill_slippage_list=fill_slippage_list,
+    )
+
+    # Assets 0 and 2 traded; asset 1 did not.
+    assert len(fill_ids) == 2
+    assert 0 in fill_ids
+    assert 2 in fill_ids
+    assert 1 not in fill_ids
+    # Cost fractions must sum to total cost.
+    assert sum(fill_costs_list) == pytest.approx(10.0)
+    assert sum(fill_slippage_list) == pytest.approx(5.0)
+
+
+def test_record_fill_log_no_trades_produces_no_entries():
+    """Zero share deltas must produce zero fill log entries."""
+    share_deltas = np.zeros(3)
+    fill_dates: list = []
+    fill_ids: list = []
+    fill_shares_list: list = []
+    fill_prices_list: list = []
+    fill_costs_list: list = []
+    fill_slippage_list: list = []
+
+    _record_fill_log(
+        d=date(2000, 1, 3),
+        share_deltas=share_deltas,
+        fill_prices=np.array([100.0, 100.0, 100.0]),
+        trade_value=np.zeros(3),
+        tc_cost=0.0,
+        slip_cost=0.0,
+        asset_ids=np.arange(3),
+        fill_dates=fill_dates,
+        fill_ids=fill_ids,
+        fill_shares_list=fill_shares_list,
+        fill_prices_list=fill_prices_list,
+        fill_costs_list=fill_costs_list,
+        fill_slippage_list=fill_slippage_list,
+    )
+    assert len(fill_ids) == 0
+
+
+def test_rebalance_weight_space_cost_reduces_nav():
+    """Weight-space rebalance with costs must reduce NAV compared to zero-cost."""
+    cfg_no_cost = _cfg(enable_costs=False)
+    cfg_cost = _cfg(enable_costs=True)
+    target = np.array([0.5, 0.5])
+    weights = np.zeros(2)
+    nav = 1_000_000.0
+    comm = np.full((N_DATES, 2), 10.0)  # 10 bps commission
+    spread = np.zeros((N_DATES, 2))
+    fee = np.zeros((N_DATES, 2))
+    mincomm = np.zeros((N_DATES, 2))
+
+    _, nav_no_cost = _rebalance_weight_space(
+        t=0,
+        target=target,
+        weights=weights,
+        nav=nav,
+        adv_mat=None,
+        comm_mat=None,
+        spread_mat=None,
+        fee_mat=None,
+        mincomm_mat=None,
+        impact_mat=None,
+        cfg=cfg_no_cost,
+    )
+    _, nav_with_cost = _rebalance_weight_space(
+        t=0,
+        target=target,
+        weights=weights,
+        nav=nav,
+        adv_mat=None,
+        comm_mat=comm,
+        spread_mat=spread,
+        fee_mat=fee,
+        mincomm_mat=mincomm,
+        impact_mat=None,
+        cfg=cfg_cost,
+    )
+    assert nav_with_cost < nav_no_cost
+
+
+def test_rebalance_weight_space_returns_target_as_new_weights():
+    """Weight-space rebalance always sets new_weights = target."""
+    cfg = _cfg()
+    target = np.array([0.3, 0.4, 0.3])
+    new_weights, _ = _rebalance_weight_space(
+        t=0,
+        target=target,
+        weights=np.zeros(3),
+        nav=1_000_000.0,
+        adv_mat=None,
+        comm_mat=None,
+        spread_mat=None,
+        fee_mat=None,
+        mincomm_mat=None,
+        impact_mat=None,
+        cfg=cfg,
+    )
+    np.testing.assert_array_equal(new_weights, target)
+
+
+def test_rebalance_share_space_nav_positive(prices_df):
+    """Share-space rebalance must keep NAV positive."""
+    mats = _preprocess_inputs(prices_df, None, None, None, N_DATES, N_ASSETS)
+    close_mat = mats["close"]
+    assert close_mat is not None
+    cfg = _cfg(enable_price_accounting=True)
+    shares = np.zeros(N_ASSETS)
+    cash = 1_000_000.0
+    nav = 1_000_000.0
+    target = np.ones(N_ASSETS) / N_ASSETS
+    asset_ids = np.arange(N_ASSETS)
+    fill_dates: list = []
+    fill_ids: list = []
+    fill_shares_list: list = []
+    fill_prices_list: list = []
+    fill_costs_list: list = []
+    fill_slippage_list: list = []
+
+    _new_weights, _new_shares, _new_cash, new_nav = _rebalance_share_space(
+        t=0,
+        d=date(2000, 1, 3),
+        target=target,
+        weights=np.zeros(N_ASSETS),
+        shares=shares,
+        cash=cash,
+        nav=nav,
+        close_mat=close_mat,
+        adv_mat=None,
+        comm_mat=None,
+        spread_mat=None,
+        fee_mat=None,
+        mincomm_mat=None,
+        impact_mat=None,
+        asset_ids=asset_ids,
+        cfg=cfg,
+        fill_dates=fill_dates,
+        fill_ids=fill_ids,
+        fill_shares_list=fill_shares_list,
+        fill_prices_list=fill_prices_list,
+        fill_costs_list=fill_costs_list,
+        fill_slippage_list=fill_slippage_list,
+    )
+
+    assert new_nav > 0.0
+    assert len(fill_ids) == N_ASSETS  # all assets traded (from 0 to target)
+
+
+def test_rebalance_share_space_fill_log_populated(prices_df):
+    """Share-space rebalance must populate the fill log for traded assets."""
+    mats = _preprocess_inputs(prices_df, None, None, None, N_DATES, N_ASSETS)
+    close_mat = mats["close"]
+    assert close_mat is not None
+    cfg = _cfg(enable_price_accounting=True)
+    fill_dates: list = []
+    fill_ids: list = []
+    fill_shares_list: list = []
+    fill_prices_list: list = []
+    fill_costs_list: list = []
+    fill_slippage_list: list = []
+
+    _rebalance_share_space(
+        t=0,
+        d=date(2000, 1, 3),
+        target=np.ones(N_ASSETS) / N_ASSETS,
+        weights=np.zeros(N_ASSETS),
+        shares=np.zeros(N_ASSETS),
+        cash=1_000_000.0,
+        nav=1_000_000.0,
+        close_mat=close_mat,
+        adv_mat=None,
+        comm_mat=None,
+        spread_mat=None,
+        fee_mat=None,
+        mincomm_mat=None,
+        impact_mat=None,
+        asset_ids=np.arange(N_ASSETS),
+        cfg=cfg,
+        fill_dates=fill_dates,
+        fill_ids=fill_ids,
+        fill_shares_list=fill_shares_list,
+        fill_prices_list=fill_prices_list,
+        fill_costs_list=fill_costs_list,
+        fill_slippage_list=fill_slippage_list,
+    )
+
+    assert len(fill_dates) > 0
+    assert all(p > 0.0 for p in fill_prices_list)
+
+
+def test_apply_corporate_actions_at_bar_no_op_without_shares():
+    """Corporate actions should no-op when shares is None (weight-space mode)."""
+    action_index = {
+        date(2000, 1, 3): [
+            {"id": 0, "action_type": "split", "split_ratio": 2.0, "cash_amount": None}
+        ]
+    }
+    close_mat = np.array([[100.0, 50.0]])
+    shares_out, cash_out, _close_out = _apply_corporate_actions_at_bar(
+        t=0,
+        d=date(2000, 1, 3),
+        action_index=action_index,
+        shares=None,
+        cash=1000.0,
+        close_mat=close_mat,
+    )
+    assert shares_out is None
+    assert cash_out == pytest.approx(1000.0)
+
+
+def test_apply_corporate_actions_at_bar_split_patches_close_mat():
+    """A 2:1 split must halve the close_mat price at the current bar."""
+    action_index = {
+        date(2000, 1, 3): [
+            {"id": 0, "action_type": "split", "split_ratio": 2.0, "cash_amount": None}
+        ]
+    }
+    close_mat = np.array([[100.0, 50.0]], dtype=float)
+    shares = np.array([100.0, 200.0])
+    _, _, new_close_mat = _apply_corporate_actions_at_bar(
+        t=0,
+        d=date(2000, 1, 3),
+        action_index=action_index,
+        shares=shares,
+        cash=500.0,
+        close_mat=close_mat,
+    )
+    assert new_close_mat is not None
+    assert new_close_mat[0, 0] == pytest.approx(50.0)  # split-adjusted price
+    assert new_close_mat[0, 1] == pytest.approx(50.0)  # unchanged
+
+
+def test_should_rebalance_every_bar():
+    """rebalance_every=1 rebalances every bar."""
+    cfg = _cfg(rebalance_every=1)
+    for t in range(5):
+        assert _should_rebalance(t, date(2000, 1, t + 3), cfg)
+
+
+def test_should_rebalance_every_n_bars():
+    """rebalance_every=3 fires at t=0, 3, 6, ... only."""
+    cfg = _cfg(rebalance_every=3)
+    assert _should_rebalance(0, date(2000, 1, 3), cfg)
+    assert not _should_rebalance(1, date(2000, 1, 4), cfg)
+    assert not _should_rebalance(2, date(2000, 1, 5), cfg)
+    assert _should_rebalance(3, date(2000, 1, 6), cfg)
+
+
+def test_should_rebalance_explicit_dates():
+    """rebalance_dates overrides rebalance_every."""
+    d_in = date(2000, 1, 5)
+    d_out = date(2000, 1, 3)
+    cfg = _cfg(rebalance_every=1, rebalance_dates=frozenset([d_in]))
+    assert _should_rebalance(0, d_in, cfg)
+    assert not _should_rebalance(0, d_out, cfg)
