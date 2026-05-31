@@ -65,25 +65,16 @@ class BacktestAnalyzerImpl:
     risk_free: float = 0.0
 
     def analyze(self, result: BacktestResult) -> AnalysisResult:
-        nav = result.nav_history
-        rets = returns_from_nav(nav)
-        dd = nav.with_columns(
-            (pl.col("nav") / pl.col("nav").cum_max() - 1.0).alias("drawdown")
-        ).select("date", "drawdown")
+        """Compute the full ``AnalysisResult`` for a backtest.
 
-        ann_vol = to_float(rets["return_1d"].std() or 0.0) * (TRADING_DAYS**0.5)
-        ann_ret = to_float(rets["return_1d"].mean() or 0.0) * TRADING_DAYS
+        Delegates to ``analysis.engine.analyze_fused``, which derives the
+        returns and drawdown series and every reported scalar (sharpe,
+        max-drawdown, annualized return/vol, CAGR, Sortino) from a single set of
+        fused passes over the NAV frame. The result is bit-for-bit identical to
+        composing the per-metric helpers (``returns_from_nav`` + ``sharpe`` +
+        ``max_drawdown`` + ``risk.cagr`` + ``risk.sortino``) at ``risk_free=0``,
+        which is the production and harness call.
+        """
+        from .engine import analyze_fused
 
-        from .risk import cagr as _cagr
-        from .risk import sortino as _sortino
-
-        return AnalysisResult(
-            returns_series=rets,
-            drawdown_series=dd,
-            sharpe=sharpe(rets, self.risk_free),
-            max_drawdown=max_drawdown(nav),
-            annualized_return=ann_ret,
-            annualized_vol=ann_vol,
-            cagr=_cagr(nav),
-            sortino=_sortino(rets, self.risk_free / TRADING_DAYS),
-        )
+        return analyze_fused(result.nav_history, self.risk_free)
