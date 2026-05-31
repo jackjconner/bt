@@ -51,3 +51,14 @@ benchmark wiring out of the modules; contract tests catch interface drift the
 unit tests miss.
 **Consequences:** `harness/` depends on all modules + `etl.datasets`; main.py
 runs the harness after the pipeline.
+
+## 2026-05-30 — Improvement-loop worktrees live in `.worktrees/`
+**Context:** The improvement loop dispatches one worker sub-agent per component
+into its own git worktree. No location was specified, so trees could land
+anywhere relative to the repo.
+**Decision:** Workers create their worktree at `.worktrees/<component>-<slug>`
+(branch `improve/<component>-<slug>` off `main`). `.worktrees/` is gitignored.
+**Rationale:** A single known, ignored directory keeps the repo root clean,
+makes the trees easy to find and prune, and avoids them ever being staged.
+**Consequences:** `.worktrees/` added to `.gitignore`; the
+`improvement-orchestrator` and `component-improvement-loop` skills name the path.

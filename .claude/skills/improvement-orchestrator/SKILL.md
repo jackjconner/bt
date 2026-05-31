@@ -33,8 +33,9 @@ not the worker doing the change. If the contract *must* break, that's a
    record the target metric's current value. Nothing is an improvement without a
    before.
 3. **Dispatch the workers.** One per chosen component, each via the **Agent
-   tool** in its own `git worktree` on branch `improve/<component>-<slug>` off
-   `main`. The brief is one sentence of goal + the exact files + what you've
+   tool** in its own worktree:
+   `git worktree add .worktrees/<component>-<slug> -b improve/<component>-<slug> main`.
+   The brief is one sentence of goal + the exact files + what you've
    ruled out + the hard constraints, and it **points the worker at the
    `component-improvement-loop` skill**. Parallel-vs-serial rule: components
    sharing no `API_REQUESTS` edge this round are independent → dispatch in

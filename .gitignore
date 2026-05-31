@@ -8,3 +8,6 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Improvement-loop worker worktrees
+.worktrees/

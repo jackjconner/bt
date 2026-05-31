@@ -60,8 +60,9 @@ DECISIONS.md, additive-API discipline):
 
 ## Worktree, PR, and scope
 
-- **Work in your worktree**, branch `improve/<component>-<slug>` off `main`.
-  Isolated trees let parallel sub-agents build and run gates without colliding.
+- **Work in your worktree** at `.worktrees/<component>-<slug>`, branch
+  `improve/<component>-<slug>` off `main`. Isolated trees let parallel sub-agents
+  build and run gates without colliding.
 - **Commit atomically with `scripts/committer`** (never `git commit` directly,
   never bypass its ruff/ty gates) as you go.
 - **Stay in your lane.** Your PR touches only your component's directory + the
