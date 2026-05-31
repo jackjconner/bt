@@ -62,6 +62,7 @@ from .costs import (
 from .engine import BacktestResult, _softmax
 from .signals import SignalFrame
 from .slippage import compute_slippage, fill_price_with_slippage
+from .vectorized import run_weight_space_vectorized, weight_space_eligible
 
 if TYPE_CHECKING:
     pass
@@ -241,6 +242,25 @@ class ProductionBacktestEngine:
             action_index = build_action_index(corporate_actions)
 
         lb, ub = _resolve_weight_bounds(cfg, n_assets, min_weight_per_asset, max_weight_per_asset)
+
+        if weight_space_eligible(cfg, close_mat):
+            return _run_vectorized_weight_space(
+                cfg,
+                dates,
+                R,
+                S,
+                tradable_mat,
+                adv_mat,
+                comm_mat,
+                spread_mat,
+                fee_mat,
+                mincomm_mat,
+                impact_mat,
+                lb,
+                ub,
+                n_dates,
+                n_assets,
+            )
 
         shares, cash, nav = _init_state(cfg, close_mat, n_assets)
         weights = np.zeros(n_assets)
@@ -651,6 +671,95 @@ def _accrue_daily_costs(
         cumulative_financing_drag += financing
 
     return nav, cash, cumulative_financing_drag
+
+
+# --------------------------------------------------------------------------- #
+# Vectorized weight-space fast path
+# --------------------------------------------------------------------------- #
+
+
+def _rebalance_schedule(
+    dates: list[date],
+    cfg: ProductionBacktestConfig,
+) -> np.ndarray:
+    """Boolean ``(n_dates,)`` rebalance mask matching ``_should_rebalance``.
+
+    With an explicit ``rebalance_dates`` set, a bar rebalances iff its date is
+    in the set; otherwise the bar-count cadence ``t % rebalance_every == 0`` is
+    used.
+    """
+    n_dates = len(dates)
+    if cfg.rebalance_dates:
+        return np.array([d in cfg.rebalance_dates for d in dates], dtype=bool)
+    idx = np.arange(n_dates)
+    return (idx % cfg.rebalance_every) == 0
+
+
+def _run_vectorized_weight_space(
+    cfg: ProductionBacktestConfig,
+    dates: list[date],
+    R: np.ndarray,
+    S: np.ndarray,
+    tradable_mat: np.ndarray | None,
+    adv_mat: np.ndarray | None,
+    comm_mat: np.ndarray | None,
+    spread_mat: np.ndarray | None,
+    fee_mat: np.ndarray | None,
+    mincomm_mat: np.ndarray | None,
+    impact_mat: np.ndarray | None,
+    lb: np.ndarray | None,
+    ub: np.ndarray | None,
+    n_dates: int,
+    n_assets: int,
+) -> BacktestResult:
+    """Run the batched weight-space core and assemble the ``BacktestResult``.
+
+    Produces output byte-identical to the event loop for the configs accepted
+    by :func:`weight_space_eligible`.  The result is assembled through the same
+    :func:`_assemble_result` path the loop uses, so ``cash_history`` (one zero
+    row per date in weight-space mode), the empty ``fill_log``, and
+    ``financing_drag`` (always ``0.0`` here — financing is an excluded feature)
+    all match the loop frame-for-frame.
+    """
+    rebal = _rebalance_schedule(dates, cfg)
+    nav_hist, final_weights, trade_dates, trade_ids, trade_qty = run_weight_space_vectorized(
+        cfg,
+        dates,
+        R,
+        S,
+        rebal=rebal,
+        tradable_mat=tradable_mat,
+        adv_mat=adv_mat,
+        comm_mat=comm_mat,
+        spread_mat=spread_mat,
+        fee_mat=fee_mat,
+        mincomm_mat=mincomm_mat,
+        impact_mat=impact_mat,
+        lb=lb,
+        ub=ub,
+    )
+    cash_hist = [0.0] * n_dates
+    return _assemble_result(
+        dates,
+        nav_hist,
+        cash_hist,
+        trade_dates,
+        trade_ids,
+        trade_qty,
+        [],
+        [],
+        [],
+        [],
+        [],
+        [],
+        final_weights,
+        None,
+        None,
+        nav_hist[-1] if nav_hist else float(cfg.initial_cash),
+        n_dates,
+        n_assets,
+        0.0,
+    )
 
 
 # --------------------------------------------------------------------------- #

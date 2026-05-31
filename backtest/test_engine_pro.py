@@ -1346,3 +1346,165 @@ def test_should_rebalance_explicit_dates():
     cfg = _cfg(rebalance_every=1, rebalance_dates=frozenset([d_in]))
     assert _should_rebalance(0, d_in, cfg)
     assert not _should_rebalance(0, d_out, cfg)
+
+
+# --------------------------------------------------------------------------- #
+# Vectorized weight-space fast path == event loop (byte-identical)
+# --------------------------------------------------------------------------- #
+#
+# The default production envelope (weight-space, same-bar fill, no financing /
+# corporate actions / lag) is routed through ``run_weight_space_vectorized``.
+# It must reproduce the event loop exactly: the golden's path-dependent NAV /
+# Sharpe / cost_drag depend on it.  Each test runs the same config twice — once
+# through the fast path, once with ``weight_space_eligible`` forced ``False`` so
+# the loop runs — and asserts every ``BacktestResult`` field matches.
+
+
+def _run_loop(monkeypatch, cfg, returns, signals, **kw):
+    """Run the engine with the vectorized fast path disabled (loop forced)."""
+    monkeypatch.setattr("backtest.engine_pro.weight_space_eligible", lambda *a, **k: False)
+    return ProductionBacktestEngine(cfg).run(returns, signals, **kw)
+
+
+def _assert_results_identical(fast: BacktestResult, loop: BacktestResult) -> None:
+    """Assert two ``BacktestResult``s are byte-identical (fast path vs loop)."""
+    np.testing.assert_array_equal(
+        fast.nav_history["nav"].to_numpy(), loop.nav_history["nav"].to_numpy()
+    )
+    assert fast.nav_history["date"].to_list() == loop.nav_history["date"].to_list()
+    assert fast.trade_log.schema == loop.trade_log.schema
+    assert fast.trade_log["date"].to_list() == loop.trade_log["date"].to_list()
+    np.testing.assert_array_equal(fast.trade_log["id"].to_numpy(), loop.trade_log["id"].to_numpy())
+    np.testing.assert_array_equal(
+        fast.trade_log["quantity"].to_numpy(), loop.trade_log["quantity"].to_numpy()
+    )
+    np.testing.assert_array_equal(fast.final_positions, loop.final_positions)
+    assert fast.cash_history.schema == loop.cash_history.schema
+    assert fast.cash_history.shape == loop.cash_history.shape
+    np.testing.assert_array_equal(
+        fast.cash_history["cash"].to_numpy(), loop.cash_history["cash"].to_numpy()
+    )
+    assert fast.fill_log.schema == loop.fill_log.schema
+    assert fast.fill_log.shape == loop.fill_log.shape
+    assert fast.financing_drag == loop.financing_drag
+
+
+def test_vectorized_takes_fast_path_by_default(returns_df, signals):
+    """The default (zero-feature) config is weight-space eligible."""
+    from backtest.engine_pro import weight_space_eligible
+
+    assert weight_space_eligible(_cfg(), None)
+
+
+def test_vectorized_matches_loop_default(monkeypatch, returns_df, signals):
+    """Zero-feature default: fast path == loop, exactly."""
+    cfg = _cfg()
+    fast = ProductionBacktestEngine(cfg).run(returns_df, signals)
+    loop = _run_loop(monkeypatch, cfg, returns_df, signals)
+    _assert_results_identical(fast, loop)
+
+
+def test_vectorized_matches_loop_with_costs(monkeypatch, returns_df, signals, tx_costs_df):
+    """Transaction costs (NAV-nonlinear min_commission floor) match the loop."""
+    cfg = _cfg(enable_costs=True)
+    fast = ProductionBacktestEngine(cfg).run(returns_df, signals, transaction_costs=tx_costs_df)
+    loop = _run_loop(monkeypatch, cfg, returns_df, signals, transaction_costs=tx_costs_df)
+    _assert_results_identical(fast, loop)
+
+
+def test_vectorized_matches_loop_with_slippage(monkeypatch, returns_df, signals, tx_costs_df):
+    """Square-root slippage term matches the loop."""
+    cfg = _cfg(enable_costs=True, enable_slippage=True)
+    fast = ProductionBacktestEngine(cfg).run(returns_df, signals, transaction_costs=tx_costs_df)
+    loop = _run_loop(monkeypatch, cfg, returns_df, signals, transaction_costs=tx_costs_df)
+    _assert_results_identical(fast, loop)
+
+
+def test_vectorized_matches_loop_with_universe_mask(monkeypatch, returns_df, signals, universe_df):
+    """Universe mask (zeroing non-tradable names) matches the loop."""
+    cfg = _cfg(enable_universe_mask=True)
+    fast = ProductionBacktestEngine(cfg).run(returns_df, signals, universe_mask=universe_df)
+    loop = _run_loop(monkeypatch, cfg, returns_df, signals, universe_mask=universe_df)
+    _assert_results_identical(fast, loop)
+
+
+def test_vectorized_matches_loop_with_weight_caps(monkeypatch, returns_df, signals):
+    """Per-name [min, max] weight clip matches the loop."""
+    cfg = _cfg(min_weight=0.0, max_weight=0.25)
+    fast = ProductionBacktestEngine(cfg).run(returns_df, signals)
+    loop = _run_loop(monkeypatch, cfg, returns_df, signals)
+    _assert_results_identical(fast, loop)
+
+
+def test_vectorized_matches_loop_with_gross_cap(monkeypatch, returns_df, signals):
+    """Gross-exposure rescale matches the loop (long/short)."""
+    cfg = _cfg(min_weight=-0.5, max_weight=0.5, max_gross_exposure=1.0)
+    fast = ProductionBacktestEngine(cfg).run(returns_df, signals)
+    loop = _run_loop(monkeypatch, cfg, returns_df, signals)
+    _assert_results_identical(fast, loop)
+
+
+def test_vectorized_matches_loop_with_net_cap(monkeypatch, returns_df, signals):
+    """Net-exposure trim (dominant-side proportional) matches the loop."""
+    cfg = _cfg(min_weight=-0.5, max_weight=0.5, max_gross_exposure=2.0, max_net_exposure=0.2)
+    fast = ProductionBacktestEngine(cfg).run(returns_df, signals)
+    loop = _run_loop(monkeypatch, cfg, returns_df, signals)
+    _assert_results_identical(fast, loop)
+
+
+def test_vectorized_matches_loop_every_n_rebalance(monkeypatch, returns_df, signals, tx_costs_df):
+    """Bar-count rebalance cadence (held-weight drift across non-rebal bars) matches."""
+    cfg = _cfg(rebalance_every=3, enable_costs=True)
+    fast = ProductionBacktestEngine(cfg).run(returns_df, signals, transaction_costs=tx_costs_df)
+    loop = _run_loop(monkeypatch, cfg, returns_df, signals, transaction_costs=tx_costs_df)
+    _assert_results_identical(fast, loop)
+
+
+def test_vectorized_matches_loop_explicit_rebalance_dates(monkeypatch, returns_df, signals):
+    """Explicit rebalance_dates schedule matches the loop."""
+    dates = returns_df["date"].sort().to_list()
+    cfg = _cfg(rebalance_dates=frozenset([dates[0], dates[5], dates[-1]]))
+    fast = ProductionBacktestEngine(cfg).run(returns_df, signals)
+    loop = _run_loop(monkeypatch, cfg, returns_df, signals)
+    _assert_results_identical(fast, loop)
+
+
+def test_vectorized_matches_loop_all_constraints_and_costs(
+    monkeypatch, returns_df, signals, tx_costs_df, universe_df
+):
+    """Full stack: mask + caps + gross + net + costs + slippage + cadence."""
+    cfg = _cfg(
+        rebalance_every=2,
+        enable_costs=True,
+        enable_slippage=True,
+        enable_universe_mask=True,
+        min_weight=-0.3,
+        max_weight=0.4,
+        max_gross_exposure=1.5,
+        max_net_exposure=0.5,
+    )
+    fast = ProductionBacktestEngine(cfg).run(
+        returns_df, signals, transaction_costs=tx_costs_df, universe_mask=universe_df
+    )
+    loop = _run_loop(
+        monkeypatch,
+        cfg,
+        returns_df,
+        signals,
+        transaction_costs=tx_costs_df,
+        universe_mask=universe_df,
+    )
+    _assert_results_identical(fast, loop)
+
+
+def test_weight_space_eligible_excludes_path_dependent_features(prices_df):
+    """Each path-dependent feature forces the loop (fast path declines)."""
+    from backtest.engine_pro import weight_space_eligible
+
+    close_mat = np.ones((N_DATES, N_ASSETS))
+    assert not weight_space_eligible(_cfg(enable_price_accounting=True), close_mat)
+    assert not weight_space_eligible(_cfg(execution_lag=1), None)
+    assert not weight_space_eligible(_cfg(enable_corporate_actions=True), None)
+    assert not weight_space_eligible(_cfg(enable_borrow_costs=True), None)
+    assert not weight_space_eligible(_cfg(enable_cash_interest=True), None)
+    assert not weight_space_eligible(_cfg(enable_financing=True), None)
