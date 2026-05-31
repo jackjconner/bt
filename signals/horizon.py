@@ -23,7 +23,8 @@ import polars as pl
 
 from etl.source import to_matrix
 
-from .ic import ICMethod, _ic_series_from_matrices
+from .ic import ICEngine, ICMethod, _ic_series_from_matrices
+from .lazy_ic import spearman_ic_lazy
 from .newey_west import newey_west_tstat
 
 
@@ -75,6 +76,7 @@ def ic_horizon_curve(
     signal_col: str = "signal",
     method: ICMethod = "rank",
     min_obs: int = 10,
+    engine: ICEngine = "lazy",
 ) -> HorizonCurve:
     """Compute mean IC over a grid of forward-return horizons.
 
@@ -93,18 +95,35 @@ def ic_horizon_curve(
         IC correlation method — "rank" (Spearman), "pearson", or "kendall".
     min_obs:
         Minimum paired observations per date to retain an IC estimate.
+    engine:
+        Spearman backend for ``method="rank"``: ``"lazy"`` (default) streams
+        the per-date IC in long-format Polars without pivoting to a dense
+        matrix; ``"matrix"`` uses the incumbent pivot + ``scipy.rankdata``
+        path.  Bit-identical results; ``"lazy"`` is faster across the grid.
+        Ignored for the pearson / kendall methods (always matrix).
 
     Returns
     -------
     HorizonCurve with one HorizonPoint per entry in ``horizon_cols``.
     """
-    # Pre-compute the signals matrix once; each horizon reuses it.
-    S, s_dates = to_matrix(signals.select("date", "id", signal_col), signal_col)
+    use_lazy = method == "rank" and engine == "lazy"
+    # Matrix path pre-computes the signal pivot once; each horizon reuses it.
+    if not use_lazy:
+        S, s_dates = to_matrix(signals.select("date", "id", signal_col), signal_col)
 
     points = []
     for h, col in sorted(horizon_cols.items()):
-        R, r_dates = to_matrix(forward_returns.select("date", "id", col), col)
-        ic_df = _ic_series_from_matrices(S, s_dates, R, r_dates, method, min_obs)
+        if use_lazy:
+            ic_df = spearman_ic_lazy(
+                signals,
+                forward_returns,
+                signal_col=signal_col,
+                return_col=col,
+                min_obs=min_obs,
+            )
+        else:
+            R, r_dates = to_matrix(forward_returns.select("date", "id", col), col)
+            ic_df = _ic_series_from_matrices(S, s_dates, R, r_dates, method, min_obs)
         s = ic_df["ic"].drop_nulls()
         arr = s.to_numpy()
         if len(arr) == 0:

@@ -8,7 +8,16 @@ from .combine import (
 )
 from .coverage import apply_min_coverage, pairwise_mask
 from .horizon import HorizonCurve, HorizonPoint, ic_horizon_curve
-from .ic import ICEvaluator, ICMethod, ICResult, ic_series, ic_series_v2, rolling_ic
+from .ic import (
+    ICEngine,
+    ICEvaluator,
+    ICMethod,
+    ICResult,
+    ic_series,
+    ic_series_v2,
+    rolling_ic,
+)
+from .lazy_ic import spearman_ic_lazy
 from .multiple_testing import (
     MultipleTestingResult,
     bh_correct,
@@ -31,6 +40,7 @@ from .turnover import TurnoverResult, rank_stability, signal_autocorr, turnover_
 __all__ = [
     "HorizonCurve",
     "HorizonPoint",
+    "ICEngine",
     "ICEvaluator",
     "ICMethod",
     "ICResult",
@@ -64,6 +74,7 @@ __all__ = [
     "rolling_ic",
     "rolling_ic_ir",
     "signal_autocorr",
+    "spearman_ic_lazy",
     "tstat_to_pvalue",
     "turnover_score",
     "zscore_blend",

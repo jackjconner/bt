@@ -11,9 +11,11 @@ from backtest.signals import SignalFrame
 from etl.source import to_float, to_matrix
 
 from .coverage import apply_min_coverage, pairwise_mask
+from .lazy_ic import spearman_ic_lazy
 from .newey_west import newey_west_tstat
 
 ICMethod = Literal["rank", "pearson", "kendall"]
+ICEngine = Literal["lazy", "matrix"]
 
 
 def _spearman_ic_rows(
@@ -263,6 +265,7 @@ def ic_series_v2(
     return_col: str,
     method: ICMethod = "rank",
     min_obs: int = 10,
+    engine: ICEngine = "lazy",
 ) -> pl.DataFrame:
     """Per-date IC of a signal against a chosen forward-return column.
 
@@ -273,8 +276,24 @@ def ic_series_v2(
     - Supports ``method`` ∈ {"rank", "pearson", "kendall"} explicitly.
     - Applies pairwise-complete masking and ``min_obs`` suppression.
 
+    ``engine`` selects the Spearman ("rank") backend:
+    - ``"lazy"`` (default) — the long-format streaming Polars formulation in
+      ``lazy_ic.py``; never pivots to a dense matrix, ranks in Polars' native
+      engine.  Bit-identical to ``"matrix"`` and faster at scale.
+    - ``"matrix"`` — the incumbent dense pivot + ``scipy.stats.rankdata`` path.
+    For ``method`` ∈ {"pearson", "kendall"} the matrix path is always used
+    (``engine`` is ignored), since those backends are not yet expressed lazily.
+
     Returns a DataFrame with columns ``(date, ic, n_obs)``.
     """
+    if method == "rank" and engine == "lazy":
+        return spearman_ic_lazy(
+            signals,
+            forward_returns,
+            signal_col=signal_col,
+            return_col=return_col,
+            min_obs=min_obs,
+        )
     S, s_dates = to_matrix(signals.select("date", "id", signal_col), signal_col)
     R, r_dates = to_matrix(forward_returns.select("date", "id", return_col), return_col)
     return _ic_series_from_matrices(S, s_dates, R, r_dates, method, min_obs)
