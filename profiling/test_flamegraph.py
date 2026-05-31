@@ -12,6 +12,7 @@ import pytest
 
 from profiling.flamegraph import (
     ProfileArtifact,
+    capture_both,
     capture_cpu,
     capture_memory,
     prune_profiles,
@@ -136,6 +137,37 @@ def test_capture_cpu_emits_flamegraph_and_calltree(tmp_path: Path) -> None:
         assert (tmp_path / a.path).exists()
         assert a.kind == "cpu"
         assert a.profiler == "pyinstrument"
+        assert a.size_bytes > 0
+
+
+def test_capture_both_emits_all_four_from_one_run(tmp_path: Path) -> None:
+    """capture_both profiles CPU + memory in a single fn execution → 4 artifacts."""
+    runs = 0
+
+    def work() -> int:
+        nonlocal runs
+        runs += 1
+        buf = bytearray(1_000_000)
+        total = 0
+        for i in range(1_000_000):
+            total += i % 7
+        return total + len(buf)
+
+    result, arts = capture_both(
+        "combined",
+        work,
+        profiles_dir=tmp_path,
+        run_id="both-run",
+        param_point_id=0,
+        git_sha="cafef00d",
+    )
+
+    assert result > 0
+    assert runs == 1  # the whole point: fn executed once, not twice
+    assert {a.fmt for a in arts} == {"speedscope", "calltree", "memray-bin", "summary"}
+    assert {a.kind for a in arts} == {"cpu", "memory"}
+    for a in arts:
+        assert (tmp_path / a.path).exists()
         assert a.size_bytes > 0
 
 

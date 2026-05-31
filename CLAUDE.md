@@ -18,15 +18,16 @@ functions are in-process and unprivileged (no ptrace/root), so they run inside
 an agent loop:
 
 ```python
-from profiling import capture_cpu, capture_memory, write_artifacts, prune_profiles
+from profiling import capture_both, write_artifacts, prune_profiles
 
-# CPU: pyinstrument → speedscope flame graph + agent-readable .calltree.txt
-result, arts = capture_cpu("build_panel", lambda: build_panel(...),
-                           profiles_dir=pdir, run_id=rid, param_point_id=0, git_sha=sha)
-# Memory: memray → .bin + agent-readable .summary.txt (sees native Polars/NumPy allocs)
-result, marts = capture_memory("build_panel", lambda: build_panel(...), profiles_dir=pdir, ...)
+# CPU (pyinstrument → speedscope + .calltree.txt) AND memory (memray → .bin +
+# .summary.txt) from ONE fn execution — 4 artifacts. Prefer this over separate
+# capture_cpu / capture_memory passes (which re-run fn); use those only when you
+# need a clean single-profiler read free of the other's overhead.
+result, arts = capture_both("build_panel", lambda: build_panel(...),
+                            profiles_dir=pdir, run_id=rid, param_point_id=0, git_sha=sha)
 
-write_artifacts(pdir, arts + marts)   # → profile_artifacts.parquet index, keyed like stage_measurements
+write_artifacts(pdir, arts)           # → profile_artifacts.parquet index, keyed like stage_measurements
 prune_profiles(pdir, keep_last_n=5)   # keeps latest N runs + any flagged on_regression=True
 ```
 

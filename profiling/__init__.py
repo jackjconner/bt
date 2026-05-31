@@ -1,6 +1,7 @@
 from .environment import RunEnvironment, capture_environment
 from .flamegraph import (
     ProfileArtifact,
+    capture_both,
     capture_cpu,
     capture_memory,
     prune_profiles,
@@ -37,6 +38,7 @@ __all__ = [
     "TrialMeasurement",
     "TrialResult",
     "TrialStats",
+    "capture_both",
     "capture_cpu",
     "capture_environment",
     "capture_memory",
