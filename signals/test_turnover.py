@@ -9,7 +9,6 @@ import pytest
 from etl.datasets import GenSpec, generate
 from signals.turnover import TurnoverResult, rank_stability, signal_autocorr, turnover_score
 
-
 SPEC = GenSpec(n_assets=40, n_dates=50, seed=17)
 
 
@@ -21,6 +20,7 @@ def _signals(name: str = "momentum") -> pl.DataFrame:
 def _constant_signal() -> pl.DataFrame:
     """A signal that never changes — autocorr should be 1."""
     from etl.datasets import _panel
+
     grid = _panel(SPEC)
     rng = np.random.default_rng(0)
     static = rng.normal(0.0, 1.0, SPEC.n_assets)
@@ -31,6 +31,7 @@ def _constant_signal() -> pl.DataFrame:
 def _random_signal() -> pl.DataFrame:
     """An iid-normal signal — autocorr should be near 0."""
     from etl.datasets import _panel
+
     grid = _panel(SPEC)
     rng = np.random.default_rng(0)
     values = rng.normal(0.0, 1.0, SPEC.n_assets * SPEC.n_dates)

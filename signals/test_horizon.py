@@ -7,7 +7,6 @@ import polars as pl
 from etl.datasets import GenSpec, generate
 from signals.horizon import HorizonCurve, HorizonPoint, ic_horizon_curve
 
-
 SPEC = GenSpec(n_assets=30, n_dates=80, seed=99)
 HORIZON_COLS = {1: "fwd_ret_1", 5: "fwd_ret_5", 21: "fwd_ret_21"}
 
@@ -23,7 +22,8 @@ def _fwd_returns() -> pl.DataFrame:
 
 def test_ic_horizon_curve_returns_horizon_curve():
     result = ic_horizon_curve(
-        _signals(), _fwd_returns(),
+        _signals(),
+        _fwd_returns(),
         horizon_cols=HORIZON_COLS,
         method="rank",
     )
@@ -33,7 +33,8 @@ def test_ic_horizon_curve_returns_horizon_curve():
 
 def test_ic_horizon_curve_has_one_point_per_horizon():
     result = ic_horizon_curve(
-        _signals(), _fwd_returns(),
+        _signals(),
+        _fwd_returns(),
         horizon_cols=HORIZON_COLS,
     )
     assert len(result.points) == 3
@@ -43,7 +44,8 @@ def test_ic_horizon_curve_has_one_point_per_horizon():
 
 def test_ic_horizon_curve_points_are_horizon_point():
     result = ic_horizon_curve(
-        _signals(), _fwd_returns(),
+        _signals(),
+        _fwd_returns(),
         horizon_cols=HORIZON_COLS,
     )
     for p in result.points:
@@ -56,7 +58,8 @@ def test_ic_horizon_curve_points_are_horizon_point():
 
 def test_ic_horizon_curve_to_frame():
     result = ic_horizon_curve(
-        _signals(), _fwd_returns(),
+        _signals(),
+        _fwd_returns(),
         horizon_cols=HORIZON_COLS,
     )
     df = result.to_frame()
@@ -72,7 +75,8 @@ def test_ic_horizon_curve_ic_decays_with_horizon():
     are expected to have weaker IC.
     """
     result = ic_horizon_curve(
-        _signals(), _fwd_returns(),
+        _signals(),
+        _fwd_returns(),
         horizon_cols={1: "fwd_ret_1", 5: "fwd_ret_5", 21: "fwd_ret_21"},
     )
     ic_at_1 = result.points[0].mean_ic

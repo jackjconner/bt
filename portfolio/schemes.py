@@ -15,6 +15,7 @@ Turnover / no-trade band:
   The complementary approach (cost penalty in the optimizer) is handled by
   optimizer.mean_variance via `cost_per_unit` and `no_trade_band`.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -76,7 +77,7 @@ def cap_weight(market_caps: np.ndarray, min_cap: float = 0.0) -> np.ndarray:
 def optimized_weight(
     alpha: np.ndarray,
     cov: np.ndarray,
-    spec: "ConstraintSpec",
+    spec: ConstraintSpec,
     risk_aversion: float = 1.0,
     w0: np.ndarray | None = None,
     cost_per_unit: np.ndarray | None = None,

@@ -11,15 +11,16 @@ from .trials import TrialMeasurement, TrialResult, TrialStats, run_trials
 __all__ = [
     # memory
     "MemSnapshot",
-    "frames_size_mb",
-    "obj_size_mb",
-    "rss_mb",
-    "snapshot",
+    # regression (feature 5)
+    "RegressionReport",
+    "RegressionViolation",
+    # environment (feature 3)
+    "RunEnvironment",
+    # scaling (feature 6)
+    "ScalingFit",
     # report (existing stable API)
     "ScalingResult",
     "StageProfile",
-    "collect_stage",
-    "print_report",
     # timer
     "StageTimer",
     "TimingResult",
@@ -27,23 +28,22 @@ __all__ = [
     "TrialMeasurement",
     "TrialResult",
     "TrialStats",
-    "run_trials",
-    # environment (feature 3)
-    "RunEnvironment",
     "capture_environment",
-    # storage (feature 4)
-    "write_run",
-    "read_runs",
-    "read_measurements",
-    # regression (feature 5)
-    "RegressionReport",
-    "RegressionViolation",
     "check_regressions",
-    # scaling (feature 6)
-    "ScalingFit",
+    "collect_stage",
     "fit_scaling",
     "fits_to_dataframe",
+    "frames_size_mb",
+    "obj_size_mb",
+    "print_report",
+    "read_measurements",
+    "read_runs",
+    "rss_mb",
+    "run_trials",
+    "snapshot",
     # output (feature 7)
     "write_json",
     "write_measurements_parquet",
+    # storage (feature 4)
+    "write_run",
 ]

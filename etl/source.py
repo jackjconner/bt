@@ -53,9 +53,7 @@ def generate_returns(
     ids = pl.int_range(0, n_assets, eager=True)
     df = pl.DataFrame({"date": dates}).join(pl.DataFrame({"id": ids}), how="cross")
     rng = np.random.default_rng(seed)
-    return df.with_columns(
-        pl.Series("return", rng.normal(0.0, 3.0, len(df)))
-    )
+    return df.with_columns(pl.Series("return", rng.normal(0.0, 3.0, len(df))))
 
 
 def write_parquet(

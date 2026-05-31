@@ -71,7 +71,7 @@ def signal_autocorr(
     """
     from scipy import stats as scipy_stats
 
-    S, dates = to_matrix(signals.select("date", "id", signal_col), signal_col)
+    S, _dates = to_matrix(signals.select("date", "id", signal_col), signal_col)
     n_dates = S.shape[0]
 
     corrs: list[float] = []
@@ -103,8 +103,8 @@ def rank_stability(
     """
     from scipy import stats as scipy_stats
 
-    S, dates = to_matrix(signals.select("date", "id", signal_col), signal_col)
-    n_dates, n_assets = S.shape
+    S, _dates = to_matrix(signals.select("date", "id", signal_col), signal_col)
+    n_dates, _n_assets = S.shape
 
     stable_counts: list[float] = []
     for t in range(1, n_dates):
@@ -158,7 +158,7 @@ def turnover_score(
     -------
     TurnoverResult
     """
-    S, dates = to_matrix(signals.select("date", "id", signal_col), signal_col)
+    S, _dates = to_matrix(signals.select("date", "id", signal_col), signal_col)
     n_dates = S.shape[0]
 
     autocorr = signal_autocorr(signals, signal_col=signal_col)

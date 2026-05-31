@@ -8,9 +8,7 @@ from etl.source import to_matrix
 from .holdings import HoldingsFrame
 
 
-def rolling_vol(
-    holdings: HoldingsFrame, returns: pl.DataFrame, window: int
-) -> pl.DataFrame:
+def rolling_vol(holdings: HoldingsFrame, returns: pl.DataFrame, window: int) -> pl.DataFrame:
     """Rolling portfolio volatility: sqrt(wᵀ Σ w) over a trailing window.
 
     The per-step asset covariance Σ is (n_assets, n_assets), so this is

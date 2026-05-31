@@ -18,7 +18,6 @@ from signals.multiple_testing import (
 )
 from signals.newey_west import newey_west_tstat
 
-
 SPEC = GenSpec(n_assets=30, n_dates=80, seed=55)
 
 
@@ -33,8 +32,7 @@ def _fwd_returns() -> pl.DataFrame:
 
 def _ic_df(name: str = "momentum") -> pl.DataFrame:
     return ic_series_v2(
-        _signals(name), _fwd_returns(),
-        return_col="fwd_ret_1", method="rank", min_obs=5
+        _signals(name), _fwd_returns(), return_col="fwd_ret_1", method="rank", min_obs=5
     )
 
 
@@ -134,7 +132,7 @@ def test_bonferroni_all_small_p():
 def test_bh_rejects_expected():
     # 5 tests: 2 with very small p, 3 with large p
     p_values = [0.001, 0.005, 0.3, 0.4, 0.9]
-    mask, threshold = bh_correct(p_values, alpha=0.05)
+    mask, _threshold = bh_correct(p_values, alpha=0.05)
     assert mask[0]
     assert mask[1]
     assert not mask[2]
@@ -142,7 +140,7 @@ def test_bh_rejects_expected():
 
 def test_bh_threshold_is_float():
     p_values = [0.01, 0.04, 0.5]
-    mask, threshold = bh_correct(p_values, alpha=0.05)
+    _mask, threshold = bh_correct(p_values, alpha=0.05)
     assert isinstance(threshold, float)
 
 

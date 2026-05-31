@@ -24,7 +24,7 @@ def _frame_with_gap() -> pl.DataFrame:
 
 def test_shape():
     df = _frame_with_gap()
-    mat, mask, dates, ids = to_masked_matrix(df, "value")
+    mat, mask, _dates, _ids = to_masked_matrix(df, "value")
     assert mat.shape == (3, 3)
     assert mask.shape == (3, 3)
 
@@ -38,7 +38,7 @@ def test_axes_sorted():
 
 def test_missing_cell_is_zero_and_mask_false():
     df = _frame_with_gap()
-    mat, mask, dates, ids = to_masked_matrix(df, "value")
+    mat, mask, _dates, _ids = to_masked_matrix(df, "value")
     # date(2020,1,3) is index 1; id=1 is index 1
     assert mat[1, 1] == 0.0
     assert not mask[1, 1]
@@ -46,7 +46,7 @@ def test_missing_cell_is_zero_and_mask_false():
 
 def test_present_cell_has_correct_value_and_mask_true():
     df = _frame_with_gap()
-    mat, mask, dates, ids = to_masked_matrix(df, "value")
+    mat, mask, _dates, _ids = to_masked_matrix(df, "value")
     # id=2 has value 3.0 everywhere except the gap
     assert mat[0, 2] == 3.0
     assert mask[0, 2]

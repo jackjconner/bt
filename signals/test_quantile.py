@@ -8,7 +8,6 @@ import polars as pl
 from etl.datasets import GenSpec, generate
 from signals.quantile import QuantileResult, quantile_spread
 
-
 SPEC = GenSpec(n_assets=50, n_dates=60, seed=7)
 
 

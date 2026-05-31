@@ -1,4 +1,5 @@
 """Tests for parametric VaR and CVaR."""
+
 from __future__ import annotations
 
 import numpy as np
@@ -65,7 +66,8 @@ class TestParametricCVaR:
 class TestVarCVarTable:
     def test_returns_correct_grid(self, equal_weights, diag_cov):
         rows = var_cvar_table(
-            equal_weights, diag_cov,
+            equal_weights,
+            diag_cov,
             confidences=(0.95, 0.99),
             horizons=(1, 5),
         )

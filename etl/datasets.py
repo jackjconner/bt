@@ -70,9 +70,7 @@ def _dates(spec: GenSpec) -> pl.Series:
 def _panel(spec: GenSpec) -> pl.DataFrame:
     """(date, id) grid, date-major / id-minor — matches C-order matrix flatten."""
     ids = pl.int_range(0, spec.n_assets, eager=True).alias("id")
-    return pl.DataFrame({"date": _dates(spec)}).join(
-        pl.DataFrame({"id": ids}), how="cross"
-    )
+    return pl.DataFrame({"date": _dates(spec)}).join(pl.DataFrame({"id": ids}), how="cross")
 
 
 def _returns_matrix(spec: GenSpec) -> np.ndarray:
@@ -141,8 +139,13 @@ def gen_prices(spec: GenSpec) -> pl.DataFrame:
 
     grid = _panel(spec)
     for name, mat in [
-        ("open", open_), ("high", high), ("low", low), ("close", close),
-        ("vwap", vwap), ("volume", volume), ("dollar_volume", dollar_volume),
+        ("open", open_),
+        ("high", high),
+        ("low", low),
+        ("close", close),
+        ("vwap", vwap),
+        ("volume", volume),
+        ("dollar_volume", dollar_volume),
         ("adv_20", adv20),
     ]:
         grid = _attach(grid, name, mat)
@@ -169,9 +172,11 @@ def gen_shares_outstanding(spec: GenSpec) -> pl.DataFrame:
     grid = _panel(spec).with_columns(
         pl.Series("shares_outstanding", np.tile(base_shares, spec.n_dates))
     )
-    return grid.join(prices, on=["date", "id"]).with_columns(
-        (pl.col("shares_outstanding") * pl.col("close")).alias("market_cap")
-    ).select("date", "id", "shares_outstanding", "market_cap")
+    return (
+        grid.join(prices, on=["date", "id"])
+        .with_columns((pl.col("shares_outstanding") * pl.col("close")).alias("market_cap"))
+        .select("date", "id", "shares_outstanding", "market_cap")
+    )
 
 
 UNIVERSE_MASK = Schema(
@@ -266,9 +271,7 @@ SPECIFIC_RISK = Schema(
 def gen_specific_risk(spec: GenSpec) -> pl.DataFrame:
     rng = _rng(spec, 6)
     n = spec.n_assets * spec.n_dates
-    return _panel(spec).with_columns(
-        pl.Series("specific_var", np.abs(rng.normal(4.0, 1.5, n)))
-    )
+    return _panel(spec).with_columns(pl.Series("specific_var", np.abs(rng.normal(4.0, 1.5, n))))
 
 
 # --------------------------------------------------------------------------- #
@@ -396,9 +399,7 @@ def gen_forward_returns(spec: GenSpec) -> pl.DataFrame:
         grid = _attach(grid, f"fwd_ret_{h}", _forward_matrix(spec, h))
     # trailing-horizon cells are np.nan; make them proper polars nulls so
     # drop_nulls / null_count treat them as missing (NaN != null in polars)
-    return grid.with_columns(
-        pl.col(f"fwd_ret_{h}").fill_nan(None) for h in FORWARD_HORIZONS
-    )
+    return grid.with_columns(pl.col(f"fwd_ret_{h}").fill_nan(None) for h in FORWARD_HORIZONS)
 
 
 ALPHA_SIGNALS = Schema(
@@ -421,9 +422,7 @@ def gen_alpha_signals(spec: GenSpec) -> pl.DataFrame:
     frames = []
     for k, name in enumerate(names):
         ic = 0.05 + 0.03 * k
-        sig = ic * fwd + np.sqrt(max(1.0 - ic * ic, 0.0)) * rng.normal(
-            0.0, 1.0, fwd.shape
-        )
+        sig = ic * fwd + np.sqrt(max(1.0 - ic * ic, 0.0)) * rng.normal(0.0, 1.0, fwd.shape)
         frame = _attach(_panel(spec), "signal", sig).with_columns(
             pl.lit(name).cast(pl.Categorical).alias("signal_name")
         )
@@ -569,9 +568,10 @@ def gen_trading_calendar(spec: GenSpec) -> pl.DataFrame:
         pl.lit(True).alias("is_session"),
         pl.Series("is_half_day", half),
         pl.lit("09:30").alias("session_open"),
-        pl.when(pl.Series(half)).then(pl.lit("13:00")).otherwise(pl.lit("16:00")).alias(
-            "session_close"
-        ),
+        pl.when(pl.Series(half))
+        .then(pl.lit("13:00"))
+        .otherwise(pl.lit("16:00"))
+        .alias("session_close"),
     )
 
 
@@ -659,15 +659,9 @@ def gen_security_master(spec: GenSpec) -> pl.DataFrame:
             "ticker": [f"SYN{i:05d}" for i in range(na)],
             "name": [f"Synthetic Asset {i}" for i in range(na)],
             "sector": pl.Series([SECTORS[i] for i in sec_idx], dtype=pl.Categorical),
-            "industry": pl.Series(
-                [INDUSTRIES[i] for i in sec_idx], dtype=pl.Categorical
-            ),
-            "country": pl.Series(
-                rng.choice(COUNTRIES, na), dtype=pl.Categorical
-            ),
-            "exchange": pl.Series(
-                rng.choice(EXCHANGES, na), dtype=pl.Categorical
-            ),
+            "industry": pl.Series([INDUSTRIES[i] for i in sec_idx], dtype=pl.Categorical),
+            "country": pl.Series(rng.choice(COUNTRIES, na), dtype=pl.Categorical),
+            "exchange": pl.Series(rng.choice(EXCHANGES, na), dtype=pl.Categorical),
             "currency": pl.Series(["USD"] * na, dtype=pl.Categorical),
             "lot_size": rng.choice([1, 100], na).astype(np.int64),
             "listing_date": pl.Series("listing_date", [start_d] * na, dtype=pl.Date),

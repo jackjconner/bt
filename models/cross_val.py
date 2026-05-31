@@ -11,7 +11,7 @@ from .ridge import ModelConfig, ModelResult, RidgeModel
 @dataclass(frozen=True)
 class CVConfig:
     n_splits: int = 5
-    shuffle: bool = False   # False → walk-forward-style contiguous folds
+    shuffle: bool = False  # False → walk-forward-style contiguous folds
 
 
 @dataclass(frozen=True)
@@ -22,11 +22,14 @@ class CVResult:
     std_r2: float
 
 
+_DEFAULT_CV_CONFIG = CVConfig()
+
+
 def cv_loop(
     model_config: ModelConfig,
     X: np.ndarray,
     y: np.ndarray,
-    cv_config: CVConfig = CVConfig(),
+    cv_config: CVConfig = _DEFAULT_CV_CONFIG,
 ) -> CVResult:
     """K-fold CV. Peak memory is one fold's train matrix: O(n_samples * n_features).
     CPU is O(K * n_samples * n_features^2)."""

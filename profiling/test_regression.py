@@ -7,7 +7,9 @@ import polars as pl
 from profiling.regression import check_regressions
 
 
-def _make_baselines(elapsed_p50: float = 1.0, result_mb: float = 100.0, peak_rss_mb: float = 500.0) -> pl.DataFrame:
+def _make_baselines(
+    elapsed_p50: float = 1.0, result_mb: float = 100.0, peak_rss_mb: float = 500.0
+) -> pl.DataFrame:
     return pl.DataFrame(
         {
             "stage": pl.Series(["etl.batch"], dtype=pl.Categorical),
@@ -33,7 +35,9 @@ def _make_thresholds(max_pct: float = 0.20, max_abs: float = 0.05) -> pl.DataFra
     )
 
 
-def _make_current(elapsed_s: float = 1.0, result_mb: float = 100.0, peak_rss_mb: float = 500.0) -> pl.DataFrame:
+def _make_current(
+    elapsed_s: float = 1.0, result_mb: float = 100.0, peak_rss_mb: float = 500.0
+) -> pl.DataFrame:
     return pl.DataFrame(
         {
             "stage": pl.Series(["etl.batch"], dtype=pl.Categorical),

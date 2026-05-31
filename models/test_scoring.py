@@ -1,4 +1,5 @@
 """Tests for models.scoring — rank IC and R² scoring."""
+
 from __future__ import annotations
 
 import numpy as np

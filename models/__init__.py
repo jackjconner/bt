@@ -26,43 +26,43 @@ from .walk_forward import (
 )
 
 __all__ = [
-    # existing
-    "FinancialModel",
     "CVConfig",
     "CVResult",
-    "cv_loop",
-    "ModelConfig",
-    "ModelResult",
-    "RidgeModel",
+    "ElasticNetConfig",
+    "ElasticNetModel",
+    # existing
+    "FinancialModel",
+    "FoldResult",
+    # walk-forward CV
+    "FoldScaler",
     # model zoo
     "LassoConfig",
     "LassoModel",
-    "ElasticNetConfig",
-    "ElasticNetModel",
+    # persistence
+    "ModelArtifact",
+    "ModelConfig",
+    "ModelResult",
     # panel
     "PanelArrays",
-    "build_panel",
-    "date_ordinals",
     # splitters
     "PurgedEmbargoCVSplitter",
-    "WalkForwardSplitter",
+    "RidgeModel",
     "RollingWindowSplitter",
-    "splits_from_calendar",
+    "WFResult",
+    "WalkForwardConfig",
+    "WalkForwardSplitter",
+    "artifact_from_fold",
+    "build_panel",
+    "cv_loop",
+    "date_ordinals",
+    "held_out_r2",
+    "ic_stats",
+    "load_artifact",
+    "predict_from_artifact",
     # scoring
     "rank_ic_score",
     "rank_ic_series",
-    "ic_stats",
-    "held_out_r2",
-    # walk-forward CV
-    "FoldScaler",
-    "FoldResult",
-    "WFResult",
-    "WalkForwardConfig",
-    "walk_forward_cv",
-    # persistence
-    "ModelArtifact",
-    "artifact_from_fold",
     "save_artifact",
-    "load_artifact",
-    "predict_from_artifact",
+    "splits_from_calendar",
+    "walk_forward_cv",
 ]

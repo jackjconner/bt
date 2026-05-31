@@ -33,7 +33,7 @@ class ScalingFit:
     metric: str
     scaling_dim: str
     log_log_slope: float
-    intercept: float      # intercept in log-log space (log of scale factor)
+    intercept: float  # intercept in log-log space (log of scale factor)
     r_squared: float
     n_points: int
 
@@ -111,7 +111,7 @@ def fit_scaling(
                         log_log_slope=float(slope),
                         intercept=float(intercept),
                         r_squared=float(r**2),
-                        n_points=int(len(unique_x)),
+                        n_points=len(unique_x),
                     )
                 )
 

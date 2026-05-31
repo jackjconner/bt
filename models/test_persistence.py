@@ -1,4 +1,5 @@
 """Tests for models.persistence — save/load ModelArtifact + predict_from_artifact."""
+
 from __future__ import annotations
 
 import tempfile
@@ -15,10 +16,10 @@ from .persistence import (
 )
 from .ridge import ModelConfig, RidgeModel
 
-
 # --------------------------------------------------------------------------- #
 # helpers
 # --------------------------------------------------------------------------- #
+
 
 def _fit_ridge(n: int = 80, nf: int = 5, seed: int = 0):
     rng = np.random.default_rng(seed)
@@ -33,9 +34,10 @@ def _fit_ridge(n: int = 80, nf: int = 5, seed: int = 0):
 # round-trip save / load
 # --------------------------------------------------------------------------- #
 
+
 class TestSaveLoadArtifact:
     def test_round_trip_coef(self):
-        result, X, _ = _fit_ridge()
+        result, _X, _ = _fit_ridge()
         artifact = artifact_from_fold(
             result,
             feature_names=tuple(f"f{i}" for i in range(5)),
@@ -52,6 +54,7 @@ class TestSaveLoadArtifact:
 
     def test_round_trip_scaler(self):
         from sklearn.preprocessing import StandardScaler
+
         result, X, _ = _fit_ridge()
         scaler = StandardScaler()
         scaler.fit(X)
@@ -110,6 +113,7 @@ class TestSaveLoadArtifact:
 # predict_from_artifact
 # --------------------------------------------------------------------------- #
 
+
 class TestPredictFromArtifact:
     def test_clean_data_matches_linear_score(self):
         """Predictions without scaling should equal X @ coef + intercept."""
@@ -125,9 +129,7 @@ class TestPredictFromArtifact:
     def test_nan_rows_get_nan_prediction(self):
         """Rows with any NaN feature should produce NaN predictions."""
         result, X, _ = _fit_ridge(nf=5)
-        artifact = artifact_from_fold(
-            result, feature_names=tuple(f"f{i}" for i in range(5))
-        )
+        artifact = artifact_from_fold(result, feature_names=tuple(f"f{i}" for i in range(5)))
         X_nan = X.copy()
         X_nan[2, 1] = np.nan
         X_nan[5, :] = np.nan
@@ -141,12 +143,10 @@ class TestPredictFromArtifact:
 
     def test_return_mask_flag(self):
         result, X, _ = _fit_ridge(nf=5)
-        artifact = artifact_from_fold(
-            result, feature_names=tuple(f"f{i}" for i in range(5))
-        )
+        artifact = artifact_from_fold(result, feature_names=tuple(f"f{i}" for i in range(5)))
         X_nan = X.copy()
         X_nan[0, 0] = np.nan
-        preds, mask = predict_from_artifact(artifact, X_nan, return_mask=True)
+        _preds, mask = predict_from_artifact(artifact, X_nan, return_mask=True)
         assert mask.shape == (len(X),)
         assert mask.dtype == bool
         assert not mask[0]
@@ -155,6 +155,7 @@ class TestPredictFromArtifact:
     def test_scaling_applied(self):
         """With scaler metadata, predictions should differ from unscaled."""
         from sklearn.preprocessing import StandardScaler
+
         result, X, _ = _fit_ridge(nf=5)
         scaler = StandardScaler()
         scaler.fit(X)
@@ -164,9 +165,7 @@ class TestPredictFromArtifact:
             scaler_mean=scaler.mean_,
             scaler_scale=scaler.scale_,
         )
-        artifact_raw = artifact_from_fold(
-            result, feature_names=tuple(f"f{i}" for i in range(5))
-        )
+        artifact_raw = artifact_from_fold(result, feature_names=tuple(f"f{i}" for i in range(5)))
         p_scaled = predict_from_artifact(artifact_scaled, X)
         p_raw = predict_from_artifact(artifact_raw, X)
         assert not np.allclose(p_scaled, p_raw, atol=1e-8)

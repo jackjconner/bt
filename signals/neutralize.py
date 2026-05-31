@@ -84,10 +84,7 @@ def _ols_residual(y: np.ndarray, X: np.ndarray) -> np.ndarray:
     # not amplify floating-point noise through division.
     std = resid_v.std()
     scale = np.abs(yv).mean() if np.abs(yv).mean() > 0 else 1.0
-    if std > 1e-8 * scale:
-        resid_v = resid_v / std
-    else:
-        resid_v = np.zeros_like(resid_v)
+    resid_v = resid_v / std if std > 1e-08 * scale else np.zeros_like(resid_v)
     out[row_ok] = resid_v
     return out
 
@@ -231,9 +228,12 @@ def evaluate_neutralization(
 
     def _summarize(df: pl.DataFrame) -> tuple[float, float, float]:
         ic_df = ic_series_v2(
-            df, forward_returns,
-            signal_col=signal_col, return_col=return_col,
-            method=method, min_obs=min_obs,
+            df,
+            forward_returns,
+            signal_col=signal_col,
+            return_col=return_col,
+            method=method,
+            min_obs=min_obs,
         )
         s = ic_df["ic"].drop_nulls()
         arr = s.to_numpy()

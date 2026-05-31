@@ -40,8 +40,8 @@ from .spec import BenchmarkContext, ComponentBenchmark
 @dataclass(frozen=True)
 class HarnessReport:
     run_id: str
-    stats: list[TrialResult]               # one per (component, param point)
-    measurements: pl.DataFrame             # persisted stage_measurements rows
+    stats: list[TrialResult]  # one per (component, param point)
+    measurements: pl.DataFrame  # persisted stage_measurements rows
     scaling_fits: list[ScalingFit]
     regression: RegressionReport | None = None
     grid: tuple[GenSpec, ...] = field(default_factory=tuple)
@@ -119,7 +119,10 @@ def print_harness_report(report: HarnessReport) -> None:
     print(f"\n{'=' * 78}")
     print(f"COMPONENT BENCHMARK HARNESS  (run_id={report.run_id})")
     print(f"{'=' * 78}")
-    print(f"{'component':<14} {'p50_ms':>9} {'p90_ms':>9} {'min_ms':>9} {'peak_mb':>9} {'result_mb':>10}")
+    print(
+        f"{'component':<14} {'p50_ms':>9} {'p90_ms':>9} "
+        f"{'min_ms':>9} {'peak_mb':>9} {'result_mb':>10}"
+    )
     print(f"{'─' * 14} {'─' * 9} {'─' * 9} {'─' * 9} {'─' * 9} {'─' * 10}")
     for s in report.stats:
         print(
@@ -138,7 +141,9 @@ def print_harness_report(report: HarnessReport) -> None:
 
     if report.regression is not None:
         status = "PASS" if report.regression.passed else "FAIL"
-        print(f"\n  regression vs baseline: {status} ({len(report.regression.violations)} violations)")
+        print(
+            f"\n  regression vs baseline: {status} ({len(report.regression.violations)} violations)"
+        )
         for v in report.regression.violations:
             print(
                 f"    {v.stage}/{v.metric}: {v.current_value:.4g} vs {v.baseline_value:.4g} "
@@ -146,4 +151,4 @@ def print_harness_report(report: HarnessReport) -> None:
             )
 
 
-__all__ = ["HarnessReport", "run_harness", "print_harness_report"]
+__all__ = ["HarnessReport", "print_harness_report", "run_harness"]

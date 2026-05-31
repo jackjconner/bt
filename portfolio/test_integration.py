@@ -3,6 +3,7 @@
 These tests use `etl.datasets.generate` to produce small but realistic
 data and exercise the full call chain: long → numpy → optimizer / risk model.
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -13,7 +14,6 @@ from portfolio.optimizer import mean_variance
 from portfolio.risk_model import build_from_long
 from portfolio.schemes import cap_weight, equal_weight, inverse_vol, turnover
 from portfolio.tracking import tracking_error
-
 
 SPEC = GenSpec(n_assets=10, n_dates=30, n_factors=3, seed=42)
 
@@ -112,5 +112,3 @@ def test_weighting_scheme_turnover_comparison():
     w_eq = equal_weight(n)
     assert turnover(w_eq, w_prev) == pytest.approx(0.0)
     assert turnover(w_iv, w_prev) == pytest.approx(0.0)
-
-

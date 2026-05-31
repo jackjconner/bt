@@ -8,6 +8,7 @@ Why multiple estimators:
 - Ledoit-Wolf shrinks the sample matrix analytically toward a scaled identity,
   minimising Frobenius-norm estimation error without extra tuning.
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -30,7 +31,7 @@ def ewma_cov(returns: np.ndarray, halflife: float) -> np.ndarray:
         returns: (T, n_assets) return matrix.
         halflife: Decay half-life in periods. Smaller → more weight on recent.
     """
-    t, n = returns.shape
+    t, _n = returns.shape
     lam = 0.5 ** (1.0 / halflife)
     # weights in chronological order: oldest = lam^(T-1), newest = 1
     w = lam ** np.arange(t - 1, -1, -1, dtype=float)
@@ -39,8 +40,7 @@ def ewma_cov(returns: np.ndarray, halflife: float) -> np.ndarray:
     mu = (w[:, None] * returns).sum(axis=0)
     excess = returns - mu
     # weighted outer-product sum: Σ w_t * (r_t - μ)(r_t - μ)ᵀ
-    cov = (w[:, None] * excess).T @ excess
-    return cov
+    return (w[:, None] * excess).T @ excess
 
 
 def ledoit_wolf_cov(returns: np.ndarray) -> np.ndarray:

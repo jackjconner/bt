@@ -53,7 +53,9 @@ def _zscore_cross_section(mat: np.ndarray) -> np.ndarray:
     return out
 
 
-def _long_to_matrix(signals_list: list[pl.DataFrame], signal_col: str) -> tuple[list[np.ndarray], list, list[int]]:
+def _long_to_matrix(
+    signals_list: list[pl.DataFrame], signal_col: str
+) -> tuple[list[np.ndarray], list, list[int]]:
     """Convert a list of signal DataFrames to aligned matrices.
 
     Returns (matrices, common_dates, common_ids) where all matrices are
@@ -179,11 +181,8 @@ def ic_weighted_blend(
     """
     ic_arr = np.array(mean_ics, dtype=float)
     total = np.abs(ic_arr).sum()
-    if total == 0:
-        # Fallback to equal weights when all ICs are zero
-        weights = np.ones(len(signals_list)) / len(signals_list)
-    else:
-        weights = ic_arr / total
+    # Fallback to equal weights when all ICs are zero
+    weights = np.ones(len(signals_list)) / len(signals_list) if total == 0 else ic_arr / total
     return zscore_blend(signals_list, weights=weights.tolist(), signal_col=signal_col)
 
 
@@ -220,7 +219,7 @@ def gram_schmidt_orthogonalize(
     ortho_flat: list[np.ndarray] = []
     results: list[pl.DataFrame] = []
 
-    for i, zm in enumerate(z_mats):
+    for _i, zm in enumerate(z_mats):
         flat = zm.reshape(-1).copy()
         # Project out all previous orthogonalized components
         for prev in ortho_flat:

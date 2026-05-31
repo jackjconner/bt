@@ -14,6 +14,7 @@ Public API
 ``date_ordinals`` — convert a polars Date series to integer ordinals usable
     as the ``groups`` argument to the splitters in ``models.splitters``.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -61,9 +62,7 @@ def date_ordinals(date_series: pl.Series) -> np.ndarray:
     different date ranges, which matters when embargo_periods is expressed in
     calendar days.
     """
-    return np.array(
-        [d.toordinal() for d in date_series.to_list()], dtype=np.int64
-    )
+    return np.array([d.toordinal() for d in date_series.to_list()], dtype=np.int64)
 
 
 def build_panel(
@@ -109,7 +108,7 @@ def build_panel(
         feature_cols = [c for c in features.columns if c not in ("date", "id")]
 
     # inner join: keeps only (date, id) pairs present in both
-    joined = features.select(["date", "id"] + feature_cols).join(
+    joined = features.select(["date", "id", *feature_cols]).join(
         target.select(["date", "id", target_col]),
         on=["date", "id"],
         how="inner",

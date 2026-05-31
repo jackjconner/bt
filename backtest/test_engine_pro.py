@@ -19,9 +19,6 @@ import numpy as np
 import polars as pl
 import pytest
 
-from etl.datasets import GenSpec, generate
-from etl.source import generate_returns
-
 from backtest import BacktestResult, ProductionBacktestConfig, ProductionBacktestEngine, SignalFrame
 from backtest.accounting import (
     execute_trades,
@@ -39,7 +36,8 @@ from backtest.constraints import (
 from backtest.corporate import apply_corporate_actions, build_action_index
 from backtest.costs import compute_borrow_cost, compute_transaction_costs
 from backtest.slippage import compute_slippage, fill_price_with_slippage
-
+from etl.datasets import GenSpec, generate
+from etl.source import generate_returns
 
 # --------------------------------------------------------------------------- #
 # Fixtures
@@ -97,9 +95,13 @@ def _cfg(**kwargs) -> ProductionBacktestConfig:
 def test_legacy_result_construction_still_works():
     """BacktestResult can still be constructed with the original 3 positional args."""
     nav = pl.DataFrame({"date": [date(2000, 1, 3)], "nav": [1_000_000.0]})
-    trades = pl.DataFrame({"date": pl.Series([], dtype=pl.Date),
-                           "id": pl.Series([], dtype=pl.Int64),
-                           "quantity": pl.Series([], dtype=pl.Float64)})
+    trades = pl.DataFrame(
+        {
+            "date": pl.Series([], dtype=pl.Date),
+            "id": pl.Series([], dtype=pl.Int64),
+            "quantity": pl.Series([], dtype=pl.Float64),
+        }
+    )
     pos = np.zeros(5)
     result = BacktestResult(nav_history=nav, trade_log=trades, final_positions=pos)
     # fill_log and cash_history should be empty DataFrames with correct schema
@@ -152,8 +154,10 @@ def test_slippage_reduces_nav(returns_df, signals, prices_df, tx_costs_df):
     """Enabling slippage must strictly reduce NAV vs no-slippage baseline."""
     no_slip = ProductionBacktestEngine(_cfg()).run(returns_df, signals)
     with_slip = ProductionBacktestEngine(_cfg(enable_slippage=True)).run(
-        returns_df, signals,
-        prices=prices_df, transaction_costs=tx_costs_df,
+        returns_df,
+        signals,
+        prices=prices_df,
+        transaction_costs=tx_costs_df,
     )
     nav_no_slip = no_slip.nav_history["nav"][-1]
     nav_with_slip = with_slip.nav_history["nav"][-1]
@@ -181,9 +185,7 @@ def test_universe_mask_zeros_untradeable_assets(returns_df, signals):
         pl.lit(True).alias("listed"),
     )
     cfg = _cfg(enable_universe_mask=True)
-    result = ProductionBacktestEngine(cfg).run(
-        returns_df, signals, universe_mask=tradable
-    )
+    result = ProductionBacktestEngine(cfg).run(returns_df, signals, universe_mask=tradable)
     masked_trades = result.trade_log.filter(
         (pl.col("id") == 0) & (pl.col("quantity").abs() > 1e-10)
     )
@@ -217,7 +219,9 @@ def test_split_doubles_shares_halves_price_nav_invariant():
 
     # Apply 2:1 split on asset 1.
     shares, prices, cash = apply_corporate_actions(
-        shares, prices, cash,
+        shares,
+        prices,
+        cash,
         action_ids=[1],
         action_types=["split"],
         split_ratios=[2.0],
@@ -236,7 +240,9 @@ def test_cash_dividend_credits_cash():
     prices = np.array([50.0, 25.0])
     cash = 1000.0
     _, _, new_cash = apply_corporate_actions(
-        shares, prices, cash,
+        shares,
+        prices,
+        cash,
         action_ids=[1],
         action_types=["cash_dividend"],
         split_ratios=[None],
@@ -247,15 +253,17 @@ def test_cash_dividend_credits_cash():
 
 def test_build_action_index_groups_by_date():
     """build_action_index should return one key per unique ex_date."""
-    df = pl.DataFrame({
-        "ex_date": [date(2000, 1, 3), date(2000, 1, 3), date(2000, 1, 5)],
-        "id": pl.Series([0, 1, 2], dtype=pl.Int64),
-        "action_type": pl.Series(["split", "cash_dividend", "split"], dtype=pl.Categorical),
-        "split_ratio": [2.0, None, 3.0],
-        "cash_amount": [None, 0.5, None],
-        "currency": pl.Series(["USD", "USD", "USD"], dtype=pl.Categorical),
-        "new_id": pl.Series([None, None, None], dtype=pl.Int64),
-    })
+    df = pl.DataFrame(
+        {
+            "ex_date": [date(2000, 1, 3), date(2000, 1, 3), date(2000, 1, 5)],
+            "id": pl.Series([0, 1, 2], dtype=pl.Int64),
+            "action_type": pl.Series(["split", "cash_dividend", "split"], dtype=pl.Categorical),
+            "split_ratio": [2.0, None, 3.0],
+            "cash_amount": [None, 0.5, None],
+            "currency": pl.Series(["USD", "USD", "USD"], dtype=pl.Categorical),
+            "new_id": pl.Series([None, None, None], dtype=pl.Int64),
+        }
+    )
     idx = build_action_index(df)
     assert len(idx) == 2
     assert date(2000, 1, 3) in idx
@@ -428,7 +436,9 @@ def test_borrow_costs_reduce_nav(returns_df, signals):
     # We'll enable short weights by relaxing min_weight and net cap.
     cfg_no_borrow = _cfg(min_weight=-0.5, max_weight=0.5, max_gross_exposure=1.0)
     cfg_borrow = _cfg(
-        min_weight=-0.5, max_weight=0.5, max_gross_exposure=1.0,
+        min_weight=-0.5,
+        max_weight=0.5,
+        max_gross_exposure=1.0,
         enable_borrow_costs=True,
     )
     spec = GenSpec(n_assets=N_ASSETS, n_dates=N_DATES, seed=42)

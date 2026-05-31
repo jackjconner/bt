@@ -148,7 +148,7 @@ def read_runs(store_dir: Path) -> pl.DataFrame:
     """Read all stored profiling-run metadata rows."""
     path = store_dir / "profiling_runs.parquet"
     if not path.exists():
-        return pl.DataFrame(schema={k: v for k, v in _RUNS_SCHEMA.items()})
+        return pl.DataFrame(schema=dict(_RUNS_SCHEMA.items()))
     return pl.read_parquet(path)
 
 
@@ -156,5 +156,5 @@ def read_measurements(store_dir: Path) -> pl.DataFrame:
     """Read all stored per-trial stage measurements."""
     path = store_dir / "stage_measurements.parquet"
     if not path.exists():
-        return pl.DataFrame(schema={k: v for k, v in _MEASUREMENTS_SCHEMA.items()})
+        return pl.DataFrame(schema=dict(_MEASUREMENTS_SCHEMA.items()))
     return pl.read_parquet(path)

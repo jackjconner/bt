@@ -14,6 +14,7 @@ def _prices(close_vals: list[float], asset_id: int = 0) -> pl.DataFrame:
     n = len(close_vals)
     base_date = date(2020, 1, 2)
     from datetime import timedelta
+
     dates = [base_date + timedelta(days=i) for i in range(n)]
     return pl.DataFrame(
         {

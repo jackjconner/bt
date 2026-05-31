@@ -14,6 +14,7 @@ two: the ``l1_ratio`` controls the mix.
 
 Both models support ``sample_weight`` in ``fit``, forwarded to sklearn.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass

@@ -28,7 +28,7 @@ def test_full_pipeline_stage_outputs(tmp_path) -> None:
 
     # risk + cost stages
     assert s.factor_vol >= 0.0 and s.tracking_error >= 0.0
-    assert s.cost_drag > 0.0          # costs strictly reduce terminal NAV
+    assert s.cost_drag > 0.0  # costs strictly reduce terminal NAV
     assert math.isfinite(s.gross_sharpe) and math.isfinite(s.net_sharpe)
 
     # profiling stage produced scaling fits and a latency figure

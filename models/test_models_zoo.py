@@ -1,4 +1,5 @@
 """Tests for models.models_zoo — LassoModel and ElasticNetModel."""
+
 from __future__ import annotations
 
 import numpy as np
@@ -25,6 +26,7 @@ def _xy(n_samples: int = 120, n_features: int = 10, seed: int = 0, sparse: bool 
 # LassoModel
 # --------------------------------------------------------------------------- #
 
+
 class TestLassoModel:
     def test_fit_returns_model_result(self):
         X, y = _xy()
@@ -46,9 +48,7 @@ class TestLassoModel:
         model = LassoModel(LassoConfig(n_features=20, alpha=0.5))
         result = model.fit(X, y)
         n_zero = np.sum(np.abs(result.coef) < 1e-8)
-        assert n_zero > 10, (
-            f"Expected Lasso to zero >10 coefs, only zeroed {n_zero}"
-        )
+        assert n_zero > 10, f"Expected Lasso to zero >10 coefs, only zeroed {n_zero}"
 
     def test_sample_weight_changes_fit(self):
         """Fitting with non-uniform sample weights should produce different coefs."""
@@ -73,6 +73,7 @@ class TestLassoModel:
 # --------------------------------------------------------------------------- #
 # ElasticNetModel
 # --------------------------------------------------------------------------- #
+
 
 class TestElasticNetModel:
     def test_fit_returns_model_result(self):
@@ -124,6 +125,7 @@ class TestElasticNetModel:
 # --------------------------------------------------------------------------- #
 # Protocol conformance (all three models share the same interface)
 # --------------------------------------------------------------------------- #
+
 
 @pytest.mark.parametrize(
     "model",

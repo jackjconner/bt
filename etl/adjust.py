@@ -43,8 +43,8 @@ import polars as pl
 class AdjustmentResult:
     """Adjusted prices and an audit log of all applied factors."""
 
-    prices: pl.DataFrame       # original columns + adj_close
-    adj_log: pl.DataFrame      # ex_date, id, action_type, factor
+    prices: pl.DataFrame  # original columns + adj_close
+    adj_log: pl.DataFrame  # ex_date, id, action_type, factor
 
 
 def adjust_prices(
@@ -77,21 +77,13 @@ def adjust_prices(
     """
     # Collect all relevant corporate actions (splits and dividends only).
     ca = corporate_actions.filter(
-        pl.col("action_type").cast(pl.String).is_in(
-            ["split", "cash_dividend", "special_dividend"]
-        )
+        pl.col("action_type").cast(pl.String).is_in(["split", "cash_dividend", "special_dividend"])
     ).sort("ex_date")
 
     # Work per asset: sort dates descending, apply factors in reverse-ex order.
     ids = sorted(prices["id"].unique().to_list())
-    all_prices_by_id = {
-        aid: prices.filter(pl.col("id") == aid).sort("date")
-        for aid in ids
-    }
-    ca_by_id = {
-        aid: ca.filter(pl.col("id") == aid).sort("ex_date")
-        for aid in ids
-    }
+    all_prices_by_id = {aid: prices.filter(pl.col("id") == aid).sort("date") for aid in ids}
+    ca_by_id = {aid: ca.filter(pl.col("id") == aid).sort("ex_date") for aid in ids}
 
     adj_frames: list[pl.DataFrame] = []
     log_rows: list[dict] = []
@@ -124,7 +116,9 @@ def adjust_prices(
                     f = 1.0 / ratio
                     for i in range(last_prior + 1):
                         factor[i] *= f
-                    log_rows.append({"ex_date": ex_date, "id": aid, "action_type": atype, "factor": f})
+                    log_rows.append(
+                        {"ex_date": ex_date, "id": aid, "action_type": atype, "factor": f}
+                    )
 
                 elif atype in ("cash_dividend", "special_dividend"):
                     cash = action_row.get("cash_amount")
@@ -134,7 +128,9 @@ def adjust_prices(
                     f = pre_close / (pre_close + cash)
                     for i in range(last_prior + 1):
                         factor[i] *= f
-                    log_rows.append({"ex_date": ex_date, "id": aid, "action_type": atype, "factor": f})
+                    log_rows.append(
+                        {"ex_date": ex_date, "id": aid, "action_type": atype, "factor": f}
+                    )
 
         adj_close = closes * factor
         adj_frames.append(pdf.with_columns(pl.Series("adj_close", adj_close)))
@@ -142,9 +138,7 @@ def adjust_prices(
     if adj_frames:
         result_prices = pl.concat(adj_frames).sort("date", "id")
     else:
-        result_prices = prices.with_columns(
-            pl.col(close_col).alias("adj_close")
-        )
+        result_prices = prices.with_columns(pl.col(close_col).alias("adj_close"))
 
     if log_rows:
         adj_log = pl.DataFrame(log_rows).with_columns(

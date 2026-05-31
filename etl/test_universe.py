@@ -27,11 +27,17 @@ def _mask_df() -> pl.DataFrame:
                     "listed": True,
                 }
             )
-    df = pl.DataFrame(rows, schema={
-        "date": pl.Date, "id": pl.Int64,
-        "in_universe": pl.Boolean, "tradable": pl.Boolean,
-        "halted": pl.Boolean, "listed": pl.Boolean,
-    })
+    df = pl.DataFrame(
+        rows,
+        schema={
+            "date": pl.Date,
+            "id": pl.Int64,
+            "in_universe": pl.Boolean,
+            "tradable": pl.Boolean,
+            "halted": pl.Boolean,
+            "listed": pl.Boolean,
+        },
+    )
     # Asset 2 is not in universe on date 2
     return df.with_columns(
         pl.when((pl.col("id") == 2) & (pl.col("date") == date(2020, 1, 3)))
@@ -69,7 +75,10 @@ def test_resolve_universe_unknown_flag_raises():
 
 def test_resolve_universe_tradable_flag():
     df = _mask_df().with_columns(
-        pl.when(pl.col("id") == 1).then(pl.lit(False)).otherwise(pl.col("tradable")).alias("tradable")
+        pl.when(pl.col("id") == 1)
+        .then(pl.lit(False))
+        .otherwise(pl.col("tradable"))
+        .alias("tradable")
     )
     dates = [date(2020, 1, 2), date(2020, 1, 3), date(2020, 1, 6)]
     ids = [0, 1, 2]

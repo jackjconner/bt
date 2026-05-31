@@ -29,18 +29,18 @@ from .newey_west import newey_west_tstat
 class HorizonPoint:
     """Summary statistics for a single horizon."""
 
-    horizon: int          # trading-day horizon label (e.g. 1, 5, 21, 63)
+    horizon: int  # trading-day horizon label (e.g. 1, 5, 21, 63)
     mean_ic: float
     ic_ir: float
     t_stat: float
-    n_dates: int          # number of dates with valid IC estimates
+    n_dates: int  # number of dates with valid IC estimates
 
 
 @dataclass(frozen=True)
 class HorizonCurve:
     """IC decay curve across a grid of horizons."""
 
-    points: tuple[HorizonPoint, ...]   # sorted by ascending horizon
+    points: tuple[HorizonPoint, ...]  # sorted by ascending horizon
     method: ICMethod
 
     def horizons(self) -> list[int]:
@@ -109,7 +109,9 @@ def ic_horizon_curve(
         s = ic_df["ic"].drop_nulls()
         arr = s.to_numpy()
         if len(arr) == 0:
-            points.append(HorizonPoint(horizon=h, mean_ic=float("nan"), ic_ir=0.0, t_stat=0.0, n_dates=0))
+            points.append(
+                HorizonPoint(horizon=h, mean_ic=float("nan"), ic_ir=0.0, t_stat=0.0, n_dates=0)
+            )
             continue
         mean_ic = float(np.nanmean(arr))
         std_ic = float(np.nanstd(arr))

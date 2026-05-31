@@ -117,8 +117,8 @@ class TestAnnualizedReturnCalendar:
 class TestSortino:
     def test_sortino_ge_sharpe_when_no_downside(self):
         """When all returns are positive, Sortino ≥ Sharpe (zero downside vol)."""
-        from analysis.risk import sortino
         from analysis.metrics import sharpe
+        from analysis.risk import sortino
 
         r = [0.001] * 252
         rets = _returns(r)
@@ -136,8 +136,8 @@ class TestSortino:
         total vol, so Sortino < Sharpe. We use a series with clearly positive
         mean to keep the comparison unambiguous.
         """
-        from analysis.risk import sortino
         from analysis.metrics import sharpe
+        from analysis.risk import sortino
 
         rng = np.random.default_rng(2)
         # Positive mean: many small gains, occasional large losses
@@ -190,7 +190,7 @@ class TestVaRCVaR:
 
     def test_cvar_le_var(self):
         """CVaR ≤ VaR since CVaR is the mean of the tail beyond VaR."""
-        from analysis.risk import var_historical, cvar_historical
+        from analysis.risk import cvar_historical, var_historical
 
         r = _returns(list(np.random.default_rng(5).normal(0.0, 0.01, 252)))
         v = var_historical(r, 0.95)
@@ -199,7 +199,7 @@ class TestVaRCVaR:
 
     def test_cvar_uses_full_tail(self):
         """CVaR should be more negative than VaR when there are extreme losses."""
-        from analysis.risk import var_historical, cvar_historical
+        from analysis.risk import cvar_historical, var_historical
 
         # Inject a few extreme losses
         base = [0.001] * 240 + [-0.10] * 12
@@ -405,9 +405,7 @@ class TestActiveReturns:
         assert "date" in ar.columns
         assert "active_return" in ar.columns
         expected = np.array(r) - np.array(b)
-        np.testing.assert_allclose(
-            ar["active_return"].to_numpy(), expected, rtol=1e-9
-        )
+        np.testing.assert_allclose(ar["active_return"].to_numpy(), expected, rtol=1e-9)
 
     def test_relative_drawdown_zero_when_equal(self):
         from analysis.benchmark import relative_drawdown
@@ -416,9 +414,7 @@ class TestActiveReturns:
         rets = _returns(r)
         bmk = _benchmark(r)
         rd = relative_drawdown(rets, bmk)
-        np.testing.assert_allclose(
-            rd["rel_drawdown"].to_numpy(), 0.0, atol=1e-12
-        )
+        np.testing.assert_allclose(rd["rel_drawdown"].to_numpy(), 0.0, atol=1e-12)
 
 
 # ---------------------------------------------------------------------------
@@ -481,22 +477,25 @@ class TestNetNav:
 
         spec = SPEC
         costs = generate("transaction_costs", spec)
-        nav_hist = generate("benchmark_returns", spec).filter(
-            pl.col("benchmark_id") == "BMK0"
-        ).with_columns(
-            (100.0 * (1.0 + pl.col("return") / 100.0).cum_prod()).alias("nav")
-        ).select("date", "nav")
+        nav_hist = (
+            generate("benchmark_returns", spec)
+            .filter(pl.col("benchmark_id") == "BMK0")
+            .with_columns((100.0 * (1.0 + pl.col("return") / 100.0).cum_prod()).alias("nav"))
+            .select("date", "nav")
+        )
 
         # Minimal trade_log: one rebalance at first date
         rng = np.random.default_rng(99)
         first_date = nav_hist["date"][0]
         n_assets = spec.n_assets
         weights = rng.dirichlet(np.ones(n_assets))
-        trade_log = pl.DataFrame({
-            "date": [first_date] * n_assets,
-            "id": list(range(n_assets)),
-            "quantity": weights.tolist(),
-        })
+        trade_log = pl.DataFrame(
+            {
+                "date": [first_date] * n_assets,
+                "id": list(range(n_assets)),
+                "quantity": weights.tolist(),
+            }
+        )
 
         result = net_nav(nav_hist, trade_log, costs)
         assert (result["nav_net"] <= result["nav_gross"] + 1e-10).all()
@@ -512,21 +511,24 @@ class TestNetNav:
             pl.lit(0.0).alias("half_spread_bps"),
             pl.lit(0.0).alias("exchange_fee_bps"),
         )
-        nav_hist = generate("benchmark_returns", spec).filter(
-            pl.col("benchmark_id") == "BMK0"
-        ).with_columns(
-            (100.0 * (1.0 + pl.col("return") / 100.0).cum_prod()).alias("nav")
-        ).select("date", "nav")
+        nav_hist = (
+            generate("benchmark_returns", spec)
+            .filter(pl.col("benchmark_id") == "BMK0")
+            .with_columns((100.0 * (1.0 + pl.col("return") / 100.0).cum_prod()).alias("nav"))
+            .select("date", "nav")
+        )
 
         first_date = nav_hist["date"][0]
         n_assets = spec.n_assets
         rng = np.random.default_rng(100)
         weights = rng.dirichlet(np.ones(n_assets))
-        trade_log = pl.DataFrame({
-            "date": [first_date] * n_assets,
-            "id": list(range(n_assets)),
-            "quantity": weights.tolist(),
-        })
+        trade_log = pl.DataFrame(
+            {
+                "date": [first_date] * n_assets,
+                "id": list(range(n_assets)),
+                "quantity": weights.tolist(),
+            }
+        )
 
         result = net_nav(nav_hist, trade_log, costs)
         np.testing.assert_allclose(
@@ -559,9 +561,7 @@ class TestConcentration:
         from analysis.turnover import gross_exposure
 
         ge = gross_exposure(self._weights())
-        np.testing.assert_allclose(
-            ge["gross_exposure"].to_numpy(), 1.0, atol=1e-10
-        )
+        np.testing.assert_allclose(ge["gross_exposure"].to_numpy(), 1.0, atol=1e-10)
 
     def test_net_exposure_unit_for_longonly(self):
         from analysis.turnover import net_exposure
@@ -583,11 +583,13 @@ class TestConcentration:
 
         n = 5
         d = session_axis(1).to_list()[0]
-        w = pl.DataFrame({
-            "date": [d] * n,
-            "id": list(range(n)),
-            "weight": [1.0 / n] * n,
-        })
+        w = pl.DataFrame(
+            {
+                "date": [d] * n,
+                "id": list(range(n)),
+                "weight": [1.0 / n] * n,
+            }
+        )
         en = effective_n(w)
         assert en["effective_n"][0] == pytest.approx(float(n), rel=1e-9)
 
@@ -654,7 +656,7 @@ class TestPeriodic:
 
     def test_monthly_returns_compounds(self):
         """Compound of monthly returns over a year ≈ annual return."""
-        from analysis.periodic import monthly_returns, annual_returns
+        from analysis.periodic import annual_returns, monthly_returns
 
         rets = self._annual_rets()
         monthly = monthly_returns(rets)
@@ -663,9 +665,7 @@ class TestPeriodic:
         # For the first year, compound months should ≈ annual
         yr = annual["year"][0]
         months_yr = monthly.filter(pl.col("year") == yr)
-        compound = float(
-            (1.0 + months_yr["monthly_return"]).product() - 1.0
-        )
+        compound = float((1.0 + months_yr["monthly_return"]).product() - 1.0)
         annual_yr = float(annual.filter(pl.col("year") == yr)["annual_return"][0])
         assert compound == pytest.approx(annual_yr, rel=1e-9)
 
@@ -747,11 +747,13 @@ class TestBenchmarkConverter:
     def test_converts_percent_to_fractional(self):
         from analysis.benchmark import benchmark_returns_to_fractional
 
-        bmk_raw = pl.DataFrame({
-            "date": [date(2000, 1, 3), date(2000, 1, 4)],
-            "benchmark_id": pl.Series(["BMK0", "BMK0"], dtype=pl.Categorical),
-            "return": [2.0, -1.0],  # percent
-        })
+        bmk_raw = pl.DataFrame(
+            {
+                "date": [date(2000, 1, 3), date(2000, 1, 4)],
+                "benchmark_id": pl.Series(["BMK0", "BMK0"], dtype=pl.Categorical),
+                "return": [2.0, -1.0],  # percent
+            }
+        )
         out = benchmark_returns_to_fractional(bmk_raw)
         assert out["return_1d"][0] == pytest.approx(0.02)
         assert out["return_1d"][1] == pytest.approx(-0.01)
@@ -771,6 +773,7 @@ class TestAnalyzerImpl:
         rng = np.random.default_rng(0)
         r = rng.normal(0.001, 0.01, 100)
         from etl.source import session_axis
+
         dates = session_axis(100).to_list()
         nav_vals = 100.0 * np.cumprod(1.0 + r)
         nav_hist = pl.DataFrame({"date": dates, "nav": nav_vals.tolist()})
@@ -781,6 +784,7 @@ class TestAnalyzerImpl:
         )
 
         from backtest.engine import BacktestResult
+
         result = BacktestResult(
             nav_history=nav_hist,
             trade_log=trade_log,

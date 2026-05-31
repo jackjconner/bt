@@ -35,8 +35,6 @@ import numpy as np
 import polars as pl
 from scipy import stats as scipy_stats
 
-
-
 # ---------------------------------------------------------------------------
 # Rolling IC-IR
 # ---------------------------------------------------------------------------
@@ -66,13 +64,18 @@ def rolling_ic_ir(
     will have NaN for the rolling statistics.
     """
     df = ic_df.sort("date")
-    return df.with_columns(
-        pl.col(ic_col).rolling_mean(window_size=window).alias("rolling_ic"),
-        pl.col(ic_col).rolling_std(window_size=window).alias("rolling_ic_std"),
-    ).with_columns(
-        (pl.col("rolling_ic") / pl.col("rolling_ic_std").replace(0.0, None))
-        .alias("rolling_ic_ir")
-    ).select("date", "rolling_ic", "rolling_ic_std", "rolling_ic_ir")
+    return (
+        df.with_columns(
+            pl.col(ic_col).rolling_mean(window_size=window).alias("rolling_ic"),
+            pl.col(ic_col).rolling_std(window_size=window).alias("rolling_ic_std"),
+        )
+        .with_columns(
+            (pl.col("rolling_ic") / pl.col("rolling_ic_std").replace(0.0, None)).alias(
+                "rolling_ic_ir"
+            )
+        )
+        .select("date", "rolling_ic", "rolling_ic_std", "rolling_ic_ir")
+    )
 
 
 # ---------------------------------------------------------------------------

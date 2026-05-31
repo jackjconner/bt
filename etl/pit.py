@@ -91,8 +91,4 @@ def latest_as_of(
     sliced = as_of_slice(df, as_of, knowledge_col=knowledge_col)
     if sliced.is_empty():
         return sliced
-    return (
-        sliced.sort(knowledge_col)
-        .group_by(by, maintain_order=False)
-        .last()
-    )
+    return sliced.sort(knowledge_col).group_by(by, maintain_order=False).last()

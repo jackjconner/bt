@@ -21,6 +21,7 @@ Component contribution to risk (CCR) per asset i:
 All inputs are plain numpy arrays; the Polars data wrangling lives in the
 callers. Using numpy throughout avoids repeated DataFrame allocations.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -39,10 +40,10 @@ class FactorRiskModel:
         cov:        (n_assets, n_assets) full asset covariance Σ = B F_cov Bᵀ + D.
     """
 
-    B: np.ndarray           # (n_assets, n_factors)
+    B: np.ndarray  # (n_assets, n_factors)
     factor_cov: np.ndarray  # (n_factors, n_factors)
     specific_var: np.ndarray  # (n_assets,)
-    cov: np.ndarray         # (n_assets, n_assets)
+    cov: np.ndarray  # (n_assets, n_assets)
 
     @classmethod
     def build(
@@ -99,16 +100,16 @@ class FactorRiskModel:
         Returns (n_factors,) array where entry k is the contribution of
         factor k, decomposing factor_variance(w) by factor.
         """
-        Bw = self.B.T @ w               # (n_factors,)
-        F = self.factor_cov             # (n_factors, n_factors)
-        return Bw * (F @ Bw)            # element-wise; sums to factor_variance
+        Bw = self.B.T @ w  # (n_factors,)
+        F = self.factor_cov  # (n_factors, n_factors)
+        return Bw * (F @ Bw)  # element-wise; sums to factor_variance
 
 
 def build_from_long(
-    factor_loadings: object,   # pl.DataFrame (date, id, factor_id, loading)
+    factor_loadings: object,  # pl.DataFrame (date, id, factor_id, loading)
     factor_covariance: object,  # pl.DataFrame (date, factor_i, factor_j, cov)
-    specific_risk: object,      # pl.DataFrame (date, id, specific_var)
-    as_of_date: object,         # date
+    specific_risk: object,  # pl.DataFrame (date, id, specific_var)
+    as_of_date: object,  # date
 ) -> FactorRiskModel:
     """Extract a single-date FactorRiskModel from long-format Polars frames.
 
@@ -126,10 +127,7 @@ def build_from_long(
     date_ = as_of_date
 
     # --- B: (n_assets, n_factors) ---
-    bl = (
-        factor_loadings.filter(pl.col("date") == date_)
-        .sort(["id", "factor_id"])
-    )
+    bl = factor_loadings.filter(pl.col("date") == date_).sort(["id", "factor_id"])
     assets = sorted(bl["id"].unique().to_list())
     factors = sorted(bl["factor_id"].unique().to_list())
     na, nk = len(assets), len(factors)
@@ -140,21 +138,15 @@ def build_from_long(
         B[asset_idx[row["id"]], factor_idx[row["factor_id"]]] = row["loading"]
 
     # --- F_cov: (n_factors, n_factors) ---
-    fc = (
-        factor_covariance.filter(pl.col("date") == date_)
-        .sort(["factor_i", "factor_j"])
-    )
+    fc = factor_covariance.filter(pl.col("date") == date_).sort(["factor_i", "factor_j"])
     F_cov = np.zeros((nk, nk))
     for row in fc.iter_rows(named=True):
         i, j = factor_idx[row["factor_i"]], factor_idx[row["factor_j"]]
         F_cov[i, j] = row["cov"]
 
     # --- specific_var: (n_assets,) ---
-    sr = (
-        specific_risk.filter(pl.col("date") == date_)
-        .sort("id")
-    )
-    spec_map = dict(zip(sr["id"].to_list(), sr["specific_var"].to_list()))
+    sr = specific_risk.filter(pl.col("date") == date_).sort("id")
+    spec_map = dict(zip(sr["id"].to_list(), sr["specific_var"].to_list(), strict=False))
     specific_var = np.array([spec_map[a] for a in assets])
 
     return FactorRiskModel.build(B=B, factor_cov=F_cov, specific_var=specific_var)

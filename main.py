@@ -9,16 +9,16 @@ import numpy as np
 from analysis import BacktestAnalyzerImpl
 from backtest import BacktestConfig, BacktestEngine, SignalFrame
 from etl import BatchLoader, ETLConfig, StreamLoader, write_parquet
+from etl.datasets import GenSpec
+from harness import print_harness_report, run_harness
 from models import CVConfig, ModelConfig, cv_loop
+from pipeline import print_pipeline_summary, run_production_pipeline
 from portfolio import (
     HoldingsFrame,
     compute_exposures,
     random_loadings,
     rolling_vol,
 )
-from etl.datasets import GenSpec
-from harness import print_harness_report, run_harness
-from pipeline import print_pipeline_summary, run_production_pipeline
 from profiling import ScalingResult, collect_stage, print_report
 from signals import ICEvaluator
 
@@ -46,9 +46,7 @@ def run_experiment(params: dict[str, int], workdir: Path) -> ScalingResult:
     )
     profiles.append(p)
 
-    _, p = collect_stage(
-        "etl.stream", lambda: StreamLoader(cfg).load(), lambda df: {"out": df}
-    )
+    _, p = collect_stage("etl.stream", lambda: StreamLoader(cfg).load(), lambda df: {"out": df})
     profiles.append(p)
 
     signals = SignalFrame.random_continuous(na, nd, seed=1)

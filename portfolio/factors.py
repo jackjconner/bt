@@ -9,8 +9,8 @@ from .holdings import HoldingsFrame
 
 @dataclass(frozen=True)
 class FactorExposure:
-    loadings: np.ndarray    # (n_assets, n_factors)  — O(n_assets * n_factors)
-    exposures: np.ndarray   # (n_dates, n_factors)   — O(n_dates * n_factors)
+    loadings: np.ndarray  # (n_assets, n_factors)  — O(n_assets * n_factors)
+    exposures: np.ndarray  # (n_dates, n_factors)   — O(n_dates * n_factors)
 
 
 def random_loadings(n_assets: int, n_factors: int, seed: int | None = None) -> np.ndarray:

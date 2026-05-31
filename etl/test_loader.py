@@ -5,7 +5,7 @@ from __future__ import annotations
 import polars as pl
 import pytest
 
-from .datasets import GenSpec, write_all, REGISTRY
+from .datasets import REGISTRY, GenSpec, write_all
 from .loader import DatasetLoader
 
 SPEC = GenSpec(n_assets=8, n_dates=20, n_features=4, n_factors=2, seed=42)

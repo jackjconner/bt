@@ -10,6 +10,7 @@ For w == b the active weight vector is zero, so TE is exactly 0.
 Annualization: multiply the per-period TE by sqrt(periods_per_year).
 The default 252 assumes a daily covariance matrix.
 """
+
 from __future__ import annotations
 
 import numpy as np

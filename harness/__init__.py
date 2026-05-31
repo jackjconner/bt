@@ -5,10 +5,10 @@ from .spec import BenchmarkContext, ComponentBenchmark, no_frames
 __all__ = [
     "BenchmarkContext",
     "ComponentBenchmark",
-    "no_frames",
-    "build_components",
-    "returns_from_prices",
     "HarnessReport",
-    "run_harness",
+    "build_components",
+    "no_frames",
     "print_harness_report",
+    "returns_from_prices",
+    "run_harness",
 ]

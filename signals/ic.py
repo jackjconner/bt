@@ -18,10 +18,10 @@ ICMethod = Literal["rank", "pearson", "kendall"]
 
 @dataclass(frozen=True)
 class ICResult:
-    ic_series: pl.DataFrame   # date, ic   — O(n_dates)
+    ic_series: pl.DataFrame  # date, ic   — O(n_dates)
     mean_ic: float
-    ic_ir: float              # mean_ic / std_ic
-    t_stat: float             # Newey-West adjusted
+    ic_ir: float  # mean_ic / std_ic
+    t_stat: float  # Newey-West adjusted
 
 
 def ic_series(signals: SignalFrame, returns: pl.DataFrame) -> pl.DataFrame:
@@ -128,9 +128,7 @@ def ic_series_v2(
     Returns a DataFrame with columns ``(date, ic, n_obs)``.
     """
     S, s_dates = to_matrix(signals.select("date", "id", signal_col), signal_col)
-    R, r_dates = to_matrix(
-        forward_returns.select("date", "id", return_col), return_col
-    )
+    R, r_dates = to_matrix(forward_returns.select("date", "id", return_col), return_col)
 
     # Align on dates that appear in both
     s_set = {d: i for i, d in enumerate(s_dates)}
@@ -151,7 +149,5 @@ def ic_series_v2(
     ic_arr = apply_min_coverage(np.array(ics), np.array(ns), min_obs)
     # Convert float NaN → Polars null so drop_nulls() works correctly.
     # Polars stores NaN and null as distinct concepts; NaN is kept by drop_nulls().
-    ic_list: list[float | None] = [
-        None if np.isnan(v) else float(v) for v in ic_arr
-    ]
+    ic_list: list[float | None] = [None if np.isnan(v) else float(v) for v in ic_arr]
     return pl.DataFrame({"date": out_dates, "ic": ic_list, "n_obs": ns})

@@ -23,6 +23,7 @@ Public API
 ``predict_from_artifact`` — apply a loaded artifact to new feature data,
                             including NaN masking and optional scaling.
 """
+
 from __future__ import annotations
 
 import pickle

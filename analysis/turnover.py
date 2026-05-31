@@ -33,12 +33,11 @@ def one_way_turnover(trade_log: pl.DataFrame) -> pl.DataFrame:
 
     Returns a DataFrame `(date, turnover_1w)`.
     """
-    daily = (
+    return (
         trade_log.group_by("date")
         .agg((pl.col("quantity").abs().sum() / 2.0).alias("turnover_1w"))
         .sort("date")
     )
-    return daily
 
 
 def two_way_turnover(trade_log: pl.DataFrame) -> pl.DataFrame:
@@ -47,12 +46,11 @@ def two_way_turnover(trade_log: pl.DataFrame) -> pl.DataFrame:
     Two-way: buys and sells are counted separately, so a full replacement = 200 %.
     Returns a DataFrame `(date, turnover_2w)`.
     """
-    daily = (
+    return (
         trade_log.group_by("date")
         .agg(pl.col("quantity").abs().sum().alias("turnover_2w"))
         .sort("date")
     )
-    return daily
 
 
 # ---------------------------------------------------------------------------
@@ -77,12 +75,11 @@ def _total_cost_bps(
     """
     trade_df = pl.DataFrame({"date": date, "id": id_, "quantity": quantity})
     joined = trade_df.join(costs, on=["date", "id"], how="left")
-    total_bps = (
+    return (
         joined["commission_bps"].fill_null(0.0)
         + 2.0 * joined["half_spread_bps"].fill_null(0.0)
         + joined["exchange_fee_bps"].fill_null(0.0)
     )
-    return total_bps
 
 
 def net_nav(
@@ -102,20 +99,12 @@ def net_nav(
     Returns a DataFrame `(date, nav_gross, nav_net)`.
     """
     # cost per trade as bps of trade NAV-value
-    cost_bps = _total_cost_bps(
-        trade_log["date"], trade_log["id"], trade_log["quantity"], costs
-    )
+    cost_bps = _total_cost_bps(trade_log["date"], trade_log["id"], trade_log["quantity"], costs)
     # trade value in NAV fraction
     trade_value = trade_log["quantity"].abs()
     # daily total cost as NAV fraction (bps / 10_000 * trade_value)
-    trade_df = trade_log.with_columns(
-        (cost_bps / 10_000.0 * trade_value).alias("cost_frac")
-    )
-    daily_cost = (
-        trade_df.group_by("date")
-        .agg(pl.col("cost_frac").sum())
-        .sort("date")
-    )
+    trade_df = trade_log.with_columns((cost_bps / 10_000.0 * trade_value).alias("cost_frac"))
+    daily_cost = trade_df.group_by("date").agg(pl.col("cost_frac").sum()).sort("date")
 
     gross = nav_history.sort("date")
     merged = gross.join(daily_cost, on="date", how="left").with_columns(
@@ -170,25 +159,17 @@ def reconstruct_weights(trade_log: pl.DataFrame) -> pl.DataFrame:
     """
     # Sum quantities per (date, id); on non-rebalance days no trades occur
     daily_pos = (
-        trade_log.group_by(["date", "id"])
-        .agg(pl.col("quantity").sum())
-        .sort(["date", "id"])
+        trade_log.group_by(["date", "id"]).agg(pl.col("quantity").sum()).sort(["date", "id"])
     )
 
     # Per date: compute per-asset absolute quantity and normalize
-    pos_norm = daily_pos.with_columns(
-        pl.col("quantity").abs().alias("abs_qty")
-    )
-    date_totals = (
-        pos_norm.group_by("date")
-        .agg(pl.col("abs_qty").sum().alias("total_abs"))
-    )
-    weights = (
+    pos_norm = daily_pos.with_columns(pl.col("quantity").abs().alias("abs_qty"))
+    date_totals = pos_norm.group_by("date").agg(pl.col("abs_qty").sum().alias("total_abs"))
+    return (
         pos_norm.join(date_totals, on="date")
         .with_columns((pl.col("abs_qty") / pl.col("total_abs")).alias("weight"))
         .select("date", "id", "weight")
     )
-    return weights
 
 
 # ---------------------------------------------------------------------------
@@ -215,11 +196,7 @@ def net_exposure(weights: pl.DataFrame) -> pl.DataFrame:
 
     Returns `(date, net_exposure)`.
     """
-    return (
-        weights.group_by("date")
-        .agg(pl.col("weight").sum().alias("net_exposure"))
-        .sort("date")
-    )
+    return weights.group_by("date").agg(pl.col("weight").sum().alias("net_exposure")).sort("date")
 
 
 def top_n_weight(weights: pl.DataFrame, n: int = 10) -> pl.DataFrame:

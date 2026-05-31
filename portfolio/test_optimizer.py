@@ -1,4 +1,5 @@
 """Tests for the mean-variance optimizer."""
+
 from __future__ import annotations
 
 import numpy as np

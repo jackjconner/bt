@@ -41,8 +41,13 @@ def test_analysis_consumes_backtest_result(synth) -> None:
     analysis = BacktestAnalyzerImpl().analyze(result)
 
     assert analysis.returns_series.height == result.nav_history.height - 1
-    for v in (analysis.sharpe, analysis.cagr, analysis.sortino,
-              analysis.annualized_vol, analysis.max_drawdown):
+    for v in (
+        analysis.sharpe,
+        analysis.cagr,
+        analysis.sortino,
+        analysis.annualized_vol,
+        analysis.max_drawdown,
+    ):
         assert math.isfinite(v)
     assert analysis.max_drawdown <= 0.0
 

@@ -1,4 +1,5 @@
 """Tests for the factor risk model."""
+
 from __future__ import annotations
 
 from datetime import date
@@ -24,8 +25,7 @@ def small_model():
 @pytest.fixture
 def weights(small_model):
     n = small_model.B.shape[0]
-    w = np.ones(n) / n
-    return w
+    return np.ones(n) / n
 
 
 class TestFactorRiskModel:
@@ -88,9 +88,7 @@ class TestBuildFromLong:
         rows_fl = []
         for i in ids:
             for f in fids:
-                rows_fl.append(
-                    {"date": d, "id": i, "factor_id": f, "loading": rng.normal()}
-                )
+                rows_fl.append({"date": d, "id": i, "factor_id": f, "loading": rng.normal()})
         fl = pl.DataFrame(rows_fl).with_columns(
             pl.col("id").cast(pl.Int64),
             pl.col("factor_id").cast(pl.Int64),
@@ -102,9 +100,7 @@ class TestBuildFromLong:
         rows_fc = []
         for i in fids:
             for j in fids:
-                rows_fc.append(
-                    {"date": d, "factor_i": i, "factor_j": j, "cov": F[i, j]}
-                )
+                rows_fc.append({"date": d, "factor_i": i, "factor_j": j, "cov": F[i, j]})
         fc = pl.DataFrame(rows_fc).with_columns(
             pl.col("factor_i").cast(pl.Int64),
             pl.col("factor_j").cast(pl.Int64),

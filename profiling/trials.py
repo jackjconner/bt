@@ -50,10 +50,10 @@ class TrialStats:
     elapsed_p90: float
     elapsed_p95: float
     elapsed_stddev: float
-    result_mb: float          # median result size
-    rss_delta_mb: float       # median net RSS delta
-    peak_rss_mb: float        # median peak RSS
-    peak_traced_mb: float     # median peak traced
+    result_mb: float  # median result size
+    rss_delta_mb: float  # median net RSS delta
+    peak_rss_mb: float  # median peak RSS
+    peak_traced_mb: float  # median peak traced
 
 
 @dataclass(frozen=True)
@@ -63,7 +63,7 @@ class TrialResult(TrialStats):
     trials: tuple[TrialMeasurement, ...]
 
 
-def _run_one(
+def _run_one[T](
     fn: Callable[[], T],
     frames_after_fn: Callable[[T], dict[str, object]],
     trial_idx: int,
@@ -100,7 +100,7 @@ def _run_one(
     )
 
 
-def run_trials(
+def run_trials[T](
     stage: str,
     fn: Callable[[], T],
     frames_after_fn: Callable[[T], dict[str, object]],

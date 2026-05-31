@@ -48,19 +48,14 @@ class Schema:
             got = actual[col.name]
             if got != col.dtype:
                 raise SchemaError(
-                    f"{self.name}: column {col.name!r} has dtype {got}, "
-                    f"expected {col.dtype}"
+                    f"{self.name}: column {col.name!r} has dtype {got}, expected {col.dtype}"
                 )
             if not col.nullable and df[col.name].null_count() > 0:
-                raise SchemaError(
-                    f"{self.name}: non-nullable column {col.name!r} has nulls"
-                )
+                raise SchemaError(f"{self.name}: non-nullable column {col.name!r} has nulls")
         if self.keys:
             n_dupe = df.select(self.keys).is_duplicated().sum()
             if n_dupe > 0:
-                raise SchemaError(
-                    f"{self.name}: {n_dupe} duplicate rows on key {self.keys}"
-                )
+                raise SchemaError(f"{self.name}: {n_dupe} duplicate rows on key {self.keys}")
 
     def empty(self) -> pl.DataFrame:
         return pl.DataFrame(schema={c.name: c.dtype for c in self.columns})

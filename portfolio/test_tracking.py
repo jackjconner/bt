@@ -1,4 +1,5 @@
 """Tests for tracking error and information ratio."""
+
 from __future__ import annotations
 
 import numpy as np

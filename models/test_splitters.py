@@ -1,5 +1,8 @@
 """Tests for models.splitters — purged embargo CV, walk-forward, rolling window."""
+
 from __future__ import annotations
+
+import itertools
 
 import numpy as np
 import pytest
@@ -10,10 +13,10 @@ from .splitters import (
     WalkForwardSplitter,
 )
 
-
 # --------------------------------------------------------------------------- #
 # helpers
 # --------------------------------------------------------------------------- #
+
 
 def _panel_groups(n_dates: int, n_assets: int) -> tuple[np.ndarray, np.ndarray]:
     """Synthetic (X, groups) where groups are per-date ordinals."""
@@ -27,6 +30,7 @@ def _panel_groups(n_dates: int, n_assets: int) -> tuple[np.ndarray, np.ndarray]:
 # --------------------------------------------------------------------------- #
 # PurgedEmbargoCVSplitter
 # --------------------------------------------------------------------------- #
+
 
 class TestPurgedEmbargoCVSplitter:
     def test_no_test_in_train(self):
@@ -83,6 +87,7 @@ class TestPurgedEmbargoCVSplitter:
 # WalkForwardSplitter
 # --------------------------------------------------------------------------- #
 
+
 class TestWalkForwardSplitter:
     def test_expanding_train_window(self):
         """Each successive fold's training set must be at least as large as the
@@ -90,7 +95,7 @@ class TestWalkForwardSplitter:
         X, groups = _panel_groups(80, 4)
         splitter = WalkForwardSplitter(n_splits=5, min_train_periods=10)
         train_sizes = [len(tr) for tr, _ in splitter.split(X, groups=groups)]
-        for a, b in zip(train_sizes, train_sizes[1:]):
+        for a, b in itertools.pairwise(train_sizes):
             assert b >= a, f"Train size shrank: {a} → {b}"
 
     def test_no_future_data_in_train(self):
@@ -128,6 +133,7 @@ class TestWalkForwardSplitter:
 # --------------------------------------------------------------------------- #
 # RollingWindowSplitter
 # --------------------------------------------------------------------------- #
+
 
 class TestRollingWindowSplitter:
     def test_fixed_train_window_size(self):

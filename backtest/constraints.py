@@ -99,7 +99,7 @@ def apply_net_exposure_cap(
     excess = abs(net) - max_net
     sign = 1.0 if net > 0.0 else -1.0
     # Reduce dominant-side positions proportionally
-    dominant_mask = (np.sign(weights) == sign)
+    dominant_mask = np.sign(weights) == sign
     dominant_sum = float(np.abs(weights[dominant_mask]).sum())
     if dominant_sum == 0.0:
         return weights

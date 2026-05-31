@@ -71,10 +71,7 @@ def alpha(
     aligned to `returns` by position when a Series is supplied.
     """
     r, b = _align(returns, benchmark)
-    if isinstance(rf, pl.Series):
-        rf_arr = rf.to_numpy()[: len(r)]
-    else:
-        rf_arr = np.full(len(r), float(rf))
+    rf_arr = rf.to_numpy()[: len(r)] if isinstance(rf, pl.Series) else np.full(len(r), float(rf))
 
     r_exc = r - rf_arr
     b_exc = b - rf_arr[: len(b)]
@@ -101,7 +98,7 @@ def r_squared(returns: pl.DataFrame, benchmark: pl.DataFrame) -> float:
     if r.var() == 0 or b.var() == 0:
         return 0.0
     corr = float(np.corrcoef(r, b)[0, 1])
-    return corr ** 2
+    return corr**2
 
 
 # ---------------------------------------------------------------------------
@@ -168,9 +165,7 @@ def down_capture(returns: pl.DataFrame, benchmark: pl.DataFrame) -> float:
 # ---------------------------------------------------------------------------
 
 
-def active_returns(
-    returns: pl.DataFrame, benchmark: pl.DataFrame
-) -> pl.DataFrame:
+def active_returns(returns: pl.DataFrame, benchmark: pl.DataFrame) -> pl.DataFrame:
     """Date-aligned series of (strategy return − benchmark return).
 
     Returns a DataFrame with columns `(date, active_return)` on the
@@ -183,9 +178,7 @@ def active_returns(
     )
 
 
-def relative_drawdown(
-    returns: pl.DataFrame, benchmark: pl.DataFrame
-) -> pl.DataFrame:
+def relative_drawdown(returns: pl.DataFrame, benchmark: pl.DataFrame) -> pl.DataFrame:
     """Drawdown of the cumulative active-return index.
 
     Builds a notional portfolio whose daily return is (strategy − benchmark);
@@ -211,6 +204,6 @@ def benchmark_returns_to_fractional(benchmark: pl.DataFrame) -> pl.DataFrame:
     Output columns: `(date, return_1d)` — one benchmark only; caller must
     filter to the desired `benchmark_id` first.
     """
-    return benchmark.with_columns(
-        (pl.col("return") / 100.0).alias("return_1d")
-    ).select("date", "return_1d")
+    return benchmark.with_columns((pl.col("return") / 100.0).alias("return_1d")).select(
+        "date", "return_1d"
+    )

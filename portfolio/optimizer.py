@@ -18,6 +18,7 @@ band enter the cost penalty. This models the common "don't trade small drifts"
 rebalance rule. The full optimization still runs; the band widens via the cost
 penalty.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass

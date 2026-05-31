@@ -28,13 +28,9 @@ class HoldingsFrame:
         """
         df = (
             signals.df.with_columns(
-                (pl.col("signal") - pl.col("signal").max().over("date"))
-                .exp()
-                .alias("_e")
+                (pl.col("signal") - pl.col("signal").max().over("date")).exp().alias("_e")
             )
-            .with_columns(
-                (pl.col("_e") / pl.col("_e").sum().over("date")).alias("weight")
-            )
+            .with_columns((pl.col("_e") / pl.col("_e").sum().over("date")).alias("weight"))
             .select("date", "id", "weight")
         )
         return HoldingsFrame(df=df)

@@ -94,7 +94,7 @@ def test_fill_sessions_zero():
     cal = _calendar()
     panel = _panel()
     filled = fill_sessions(panel, cal, ids=[0, 1], method="zero")
-    jan6 = filled.filter((pl.col("date") == date(2020, 1, 6)))
+    jan6 = filled.filter(pl.col("date") == date(2020, 1, 6))
     assert (jan6["value"] == 0.0).all()
 
 
@@ -111,5 +111,5 @@ def test_align_output_sorted_by_date_id():
     aligned = align_to_calendar(panel, cal, ids=[0, 1])
     dates = aligned["date"].to_list()
     ids = aligned["id"].to_list()
-    pairs = list(zip(dates, ids))
+    pairs = list(zip(dates, ids, strict=False))
     assert pairs == sorted(pairs)

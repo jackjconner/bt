@@ -26,7 +26,6 @@ from dataclasses import dataclass
 import numpy as np
 import polars as pl
 
-
 # ---------------------------------------------------------------------------
 # Factor attribution via OLS
 # ---------------------------------------------------------------------------
@@ -69,9 +68,8 @@ def factor_attribution(
     TRADING_DAYS = 252
 
     # Pivot factor returns to (date, factor_0, factor_1, ...)
-    wide_factors = (
-        factor_returns.sort(["date", "factor_id"])
-        .pivot(on="factor_id", index="date", values="return")
+    wide_factors = factor_returns.sort(["date", "factor_id"]).pivot(
+        on="factor_id", index="date", values="return"
     )
 
     joined = returns.join(wide_factors, on="date", how="inner")
@@ -99,11 +97,9 @@ def factor_attribution(
     residuals = y - y_hat
 
     factor_ids = [int(c) for c in factor_cols]
-    exposures = {fid: float(b) for fid, b in zip(factor_ids, betas)}
+    exposures = {fid: float(b) for fid, b in zip(factor_ids, betas, strict=False)}
 
-    resid_df = joined.select("date").with_columns(
-        pl.Series("residual", residuals)
-    )
+    resid_df = joined.select("date").with_columns(pl.Series("residual", residuals))
 
     return FactorAttributionResult(
         factor_exposures=exposures,

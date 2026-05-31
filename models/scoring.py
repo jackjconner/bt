@@ -13,6 +13,7 @@ Public API
 ``held_out_r2``       — standard R² helper (already in cross_val.py but
                         re-exported here for completeness).
 """
+
 from __future__ import annotations
 
 import numpy as np

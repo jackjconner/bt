@@ -63,7 +63,7 @@ def apply_corporate_actions(
         modified in-place and also returned for convenience.
     """
     for idx, atype, ratio, amount in zip(
-        action_ids, action_types, split_ratios, cash_amounts
+        action_ids, action_types, split_ratios, cash_amounts, strict=False
     ):
         if idx < 0 or idx >= len(shares):
             continue
@@ -78,7 +78,7 @@ def apply_corporate_actions(
 
 
 def build_action_index(
-    corporate_actions: "pl.DataFrame",  # noqa: F821  — polars import at call-site
+    corporate_actions: pl.DataFrame,  # noqa: F821  — polars import at call-site
 ) -> dict:
     """Pre-index corporate actions by ex_date for O(1) per-step lookup.
 

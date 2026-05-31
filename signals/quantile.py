@@ -89,9 +89,7 @@ def quantile_spread(
     QuantileResult
     """
     S, s_dates = to_matrix(signals.select("date", "id", signal_col), signal_col)
-    R, r_dates = to_matrix(
-        forward_returns.select("date", "id", return_col), return_col
-    )
+    R, r_dates = to_matrix(forward_returns.select("date", "id", return_col), return_col)
 
     s_map = {d: i for i, d in enumerate(s_dates)}
     r_map = {d: i for i, d in enumerate(r_dates)}
@@ -115,10 +113,11 @@ def quantile_spread(
         buckets = np.clip(buckets, 1, n_quantiles)
 
         date_spreads: dict[int, list[float]] = {b: [] for b in range(1, n_quantiles + 1)}
-        for b, ret in zip(buckets, ym):
+        for b, ret in zip(buckets, ym, strict=False):
             date_spreads[b].append(ret)
 
-        top_ret = float(np.mean(date_spreads[n_quantiles])) if date_spreads[n_quantiles] else float("nan")
+        dn = date_spreads[n_quantiles]
+        top_ret = float(np.mean(dn)) if dn else float("nan")
         bot_ret = float(np.mean(date_spreads[1])) if date_spreads[1] else float("nan")
 
         for b in range(1, n_quantiles + 1):
@@ -136,9 +135,7 @@ def quantile_spread(
             spreads.append(top_ret - bot_ret)
 
     if rows:
-        bucket_returns = pl.DataFrame(rows).with_columns(
-            pl.col("bucket").cast(pl.Int32)
-        )
+        bucket_returns = pl.DataFrame(rows).with_columns(pl.col("bucket").cast(pl.Int32))
     else:
         bucket_returns = pl.DataFrame(
             {"date": [], "bucket": [], "mean_ret": [], "n_assets": []}
@@ -150,8 +147,7 @@ def quantile_spread(
 
     # Aggregate across dates
     mean_by_bucket = (
-        bucket_returns
-        .filter(pl.col("mean_ret").is_finite())
+        bucket_returns.filter(pl.col("mean_ret").is_finite())
         .group_by("bucket")
         .agg(pl.col("mean_ret").mean().alias("mean_ret"))
         .sort("bucket")

@@ -17,6 +17,7 @@ Horizon scaling: for an h-period horizon under i.i.d. returns,
 
 Multi-horizon VaR/CVaR tables are useful for risk reporting (1d, 5d, 21d).
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -43,10 +44,7 @@ def parametric_var(
         VaR as a positive loss (i.e. the threshold below which losses exceed
         the VaR level). Multiply by portfolio value for dollar VaR.
     """
-    if mean is None:
-        mu_p = 0.0
-    else:
-        mu_p = float(weights @ mean)
+    mu_p = 0.0 if mean is None else float(weights @ mean)
 
     var_p = float(weights @ cov @ weights)
     sigma_p = np.sqrt(max(var_p, 0.0))
@@ -57,7 +55,7 @@ def parametric_var(
     z = norm.ppf(1.0 - confidence)
     # portfolio return quantile at the loss tail
     ret_quantile = mu_h + z * sigma_h
-    return float(-ret_quantile)   # positive = loss
+    return float(-ret_quantile)  # positive = loss
 
 
 def parametric_cvar(
@@ -84,10 +82,7 @@ def parametric_cvar(
     Returns:
         CVaR as a positive expected loss in the tail.
     """
-    if mean is None:
-        mu_p = 0.0
-    else:
-        mu_p = float(weights @ mean)
+    mu_p = 0.0 if mean is None else float(weights @ mean)
 
     var_p = float(weights @ cov @ weights)
     sigma_p = np.sqrt(max(var_p, 0.0))
@@ -95,9 +90,9 @@ def parametric_cvar(
     mu_h = horizon * mu_p
     sigma_h = np.sqrt(horizon) * sigma_p
 
-    alpha = 1.0 - confidence   # tail probability
-    z_alpha = norm.ppf(alpha)          # negative quantile
-    phi_z = norm.pdf(z_alpha)          # PDF at that point
+    alpha = 1.0 - confidence  # tail probability
+    z_alpha = norm.ppf(alpha)  # negative quantile
+    phi_z = norm.pdf(z_alpha)  # PDF at that point
     # ES = −μ_h + σ_h · φ(z_α) / α
     es = -mu_h + sigma_h * phi_z / alpha
     return float(es)

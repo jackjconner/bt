@@ -111,9 +111,10 @@ def apply_security_master(
     in_window = (pl.col("date") >= pl.col("listing_date")) & (
         pl.col("delisting_date").is_null() | (pl.col("date") <= pl.col("delisting_date"))
     )
-    updated = joined.with_columns(
-        pl.when(in_window).then(pl.col("in_universe")).otherwise(pl.lit(False)).alias("in_universe"),
+    return joined.with_columns(
+        pl.when(in_window)
+        .then(pl.col("in_universe"))
+        .otherwise(pl.lit(False))
+        .alias("in_universe"),
         pl.when(in_window).then(pl.col("listed")).otherwise(pl.lit(False)).alias("listed"),
     ).drop("listing_date", "delisting_date")
-
-    return updated

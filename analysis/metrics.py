@@ -13,8 +13,8 @@ TRADING_DAYS = 252
 
 @dataclass(frozen=True)
 class AnalysisResult:
-    returns_series: pl.DataFrame    # date, return_1d   — O(n_dates)
-    drawdown_series: pl.DataFrame   # date, drawdown    — O(n_dates)
+    returns_series: pl.DataFrame  # date, return_1d   — O(n_dates)
+    drawdown_series: pl.DataFrame  # date, drawdown    — O(n_dates)
     sharpe: float
     max_drawdown: float
     annualized_return: float
@@ -46,14 +46,11 @@ def sharpe(
     `risk_free_rate.daily_rate`.
     """
     r = returns["return_1d"]
-    if isinstance(rf, pl.Series):
-        excess = r - rf
-    else:
-        excess = r - rf / TRADING_DAYS
+    excess = r - rf if isinstance(rf, pl.Series) else r - rf / TRADING_DAYS
     std = excess.std()
     if std is None or std == 0:
         return 0.0
-    return float(excess.mean() / std * (TRADING_DAYS ** 0.5))
+    return float(excess.mean() / std * (TRADING_DAYS**0.5))
 
 
 def max_drawdown(nav: pl.DataFrame) -> float:
@@ -72,10 +69,11 @@ class BacktestAnalyzerImpl:
             (pl.col("nav") / pl.col("nav").cum_max() - 1.0).alias("drawdown")
         ).select("date", "drawdown")
 
-        ann_vol = float(rets["return_1d"].std() or 0.0) * (TRADING_DAYS ** 0.5)
+        ann_vol = float(rets["return_1d"].std() or 0.0) * (TRADING_DAYS**0.5)
         ann_ret = float(rets["return_1d"].mean() or 0.0) * TRADING_DAYS
 
-        from .risk import cagr as _cagr, sortino as _sortino
+        from .risk import cagr as _cagr
+        from .risk import sortino as _sortino
 
         return AnalysisResult(
             returns_series=rets,

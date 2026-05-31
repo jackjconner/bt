@@ -284,8 +284,13 @@ class ProductionBacktestEngine:
                 if shares is not None and close_mat is not None:
                     cur_prices = close_mat[t]
                     shares, cur_prices, cash = apply_corporate_actions(
-                        shares, cur_prices, cash,
-                        ids_ca, types_ca, ratios_ca, amounts_ca,
+                        shares,
+                        cur_prices,
+                        cash,
+                        ids_ca,
+                        types_ca,
+                        ratios_ca,
+                        amounts_ca,
                     )
                     # Propagate price adjustments back to close_mat for the
                     # rest of the simulation.  This is a simplified adjustment:
@@ -300,13 +305,31 @@ class ProductionBacktestEngine:
                 target = pending_target
                 pending_target = None
                 weights, shares, cash, nav = _execute_rebalance(
-                    t, d, target, weights, shares, cash, nav,
-                    close_mat, adv_mat,
-                    comm_mat, spread_mat, fee_mat, mincomm_mat, impact_mat,
-                    asset_ids, cfg,
-                    trade_dates, trade_ids, trade_qty,
-                    fill_dates, fill_ids, fill_shares,
-                    fill_prices_list, fill_costs_list, fill_slippage_list,
+                    t,
+                    d,
+                    target,
+                    weights,
+                    shares,
+                    cash,
+                    nav,
+                    close_mat,
+                    adv_mat,
+                    comm_mat,
+                    spread_mat,
+                    fee_mat,
+                    mincomm_mat,
+                    impact_mat,
+                    asset_ids,
+                    cfg,
+                    trade_dates,
+                    trade_ids,
+                    trade_qty,
+                    fill_dates,
+                    fill_ids,
+                    fill_shares,
+                    fill_prices_list,
+                    fill_costs_list,
+                    fill_slippage_list,
                 )
 
             # -------------------------------------------------------------- #
@@ -333,13 +356,31 @@ class ProductionBacktestEngine:
                 else:
                     # Execute immediately (same-bar fill, legacy default).
                     weights, shares, cash, nav = _execute_rebalance(
-                        t, d, raw_target, weights, shares, cash, nav,
-                        close_mat, adv_mat,
-                        comm_mat, spread_mat, fee_mat, mincomm_mat, impact_mat,
-                        asset_ids, cfg,
-                        trade_dates, trade_ids, trade_qty,
-                        fill_dates, fill_ids, fill_shares,
-                        fill_prices_list, fill_costs_list, fill_slippage_list,
+                        t,
+                        d,
+                        raw_target,
+                        weights,
+                        shares,
+                        cash,
+                        nav,
+                        close_mat,
+                        adv_mat,
+                        comm_mat,
+                        spread_mat,
+                        fee_mat,
+                        mincomm_mat,
+                        impact_mat,
+                        asset_ids,
+                        cfg,
+                        trade_dates,
+                        trade_ids,
+                        trade_qty,
+                        fill_dates,
+                        fill_ids,
+                        fill_shares,
+                        fill_prices_list,
+                        fill_costs_list,
+                        fill_slippage_list,
                     )
 
             # -------------------------------------------------------------- #
@@ -395,10 +436,10 @@ class ProductionBacktestEngine:
 
         return BacktestResult(
             nav_history=pl.DataFrame({"date": dates, "nav": nav_hist}),
-            trade_log=pl.DataFrame(
-                {"date": trade_dates, "id": trade_ids, "quantity": trade_qty}
-            ),
-            final_positions=weights if shares is None else weights_from_shares(
+            trade_log=pl.DataFrame({"date": trade_dates, "id": trade_ids, "quantity": trade_qty}),
+            final_positions=weights
+            if shares is None
+            else weights_from_shares(
                 shares, close_mat[n_dates - 1] if close_mat is not None else np.zeros(n_assets), nav
             ),
             fill_log=fill_log,
@@ -463,15 +504,19 @@ def _execute_rebalance(
         # Build fill prices with per-asset slippage (scalar loop is acceptable
         # because n_assets is typically O(100–10k), not a bottleneck).
         trade_value_est = (target - weights) * nav  # rough notional estimate
-        fill_prices = np.array([
-            fill_price_with_slippage(
-                mid_prices[i],
-                trade_value_est[i],
-                adv_t[i],
-                impact_t[i],
-            ) if cfg.enable_slippage else mid_prices[i]
-            for i in range(n_assets)
-        ])
+        fill_prices = np.array(
+            [
+                fill_price_with_slippage(
+                    mid_prices[i],
+                    trade_value_est[i],
+                    adv_t[i],
+                    impact_t[i],
+                )
+                if cfg.enable_slippage
+                else mid_prices[i]
+                for i in range(n_assets)
+            ]
+        )
 
         share_deltas = target_weights_to_share_deltas(target, shares, fill_prices, nav)
         trade_value = share_deltas * fill_prices
@@ -482,7 +527,10 @@ def _execute_rebalance(
         if cfg.enable_costs and comm_mat is not None:
             tc_cost = compute_transaction_costs(
                 trade_value,
-                comm_mat[t], spread_mat[t], fee_mat[t], mincomm_mat[t],
+                comm_mat[t],
+                spread_mat[t],
+                fee_mat[t],
+                mincomm_mat[t],
             )
         if cfg.enable_slippage:
             slip_cost = compute_slippage(trade_value, adv_t, impact_t)
@@ -501,10 +549,7 @@ def _execute_rebalance(
             fill_prices_list.append(float(fill_prices[i]))
             # Distribute total cost proportionally to trade notional.
             abs_total = float(np.abs(trade_value[traded_mask]).sum())
-            if abs_total > 0.0:
-                frac = abs(trade_value[i]) / abs_total
-            else:
-                frac = 0.0
+            frac = abs(trade_value[i]) / abs_total if abs_total > 0.0 else 0.0
             fill_costs_list.append(frac * tc_cost)
             fill_slippage_list.append(frac * slip_cost)
 
@@ -520,7 +565,10 @@ def _execute_rebalance(
         if cfg.enable_costs and comm_mat is not None:
             tc_cost = compute_transaction_costs(
                 trade_value,
-                comm_mat[t], spread_mat[t], fee_mat[t], mincomm_mat[t],
+                comm_mat[t],
+                spread_mat[t],
+                fee_mat[t],
+                mincomm_mat[t],
             )
         if cfg.enable_slippage:
             slip_cost = compute_slippage(trade_value, adv_t, impact_t)
@@ -563,9 +611,7 @@ def _to_bool_matrix_or_none(
     """Same as ``_to_matrix_or_none`` but casts to bool."""
     if df is None or col not in df.columns:
         return None
-    mat, _ = to_matrix(
-        df.select("date", "id", pl.col(col).cast(pl.Float64).alias(col)), col
-    )
+    mat, _ = to_matrix(df.select("date", "id", pl.col(col).cast(pl.Float64).alias(col)), col)
     return mat.astype(bool)
 
 

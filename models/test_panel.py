@@ -1,4 +1,5 @@
 """Tests for models.panel — long (date, id) panel → aligned numpy arrays."""
+
 from __future__ import annotations
 
 import numpy as np
@@ -6,14 +7,17 @@ import polars as pl
 
 from .panel import build_panel, date_ordinals
 
-
 # --------------------------------------------------------------------------- #
 # helpers
 # --------------------------------------------------------------------------- #
 
-def _make_features(n_dates: int = 10, n_assets: int = 5, n_features: int = 3, seed: int = 0) -> pl.DataFrame:
+
+def _make_features(
+    n_dates: int = 10, n_assets: int = 5, n_features: int = 3, seed: int = 0
+) -> pl.DataFrame:
     rng = np.random.default_rng(seed)
     from datetime import date, timedelta
+
     start = date(2020, 1, 2)
     dates = [start + timedelta(days=i) for i in range(n_dates)]
     rows = []
@@ -29,6 +33,7 @@ def _make_features(n_dates: int = 10, n_assets: int = 5, n_features: int = 3, se
 def _make_targets(n_dates: int = 10, n_assets: int = 5, seed: int = 1) -> pl.DataFrame:
     rng = np.random.default_rng(seed)
     from datetime import date, timedelta
+
     start = date(2020, 1, 2)
     dates = [start + timedelta(days=i) for i in range(n_dates)]
     rows = []
@@ -42,9 +47,11 @@ def _make_targets(n_dates: int = 10, n_assets: int = 5, seed: int = 1) -> pl.Dat
 # date_ordinals
 # --------------------------------------------------------------------------- #
 
+
 def test_date_ordinals_monotone():
     """date_ordinals must be strictly increasing for a sorted date series."""
     from datetime import date
+
     dates = pl.Series([date(2020, 1, i + 1) for i in range(5)])
     ords = date_ordinals(dates)
     assert list(ords) == sorted(ords), "ordinals are not sorted"
@@ -54,6 +61,7 @@ def test_date_ordinals_monotone():
 # --------------------------------------------------------------------------- #
 # build_panel
 # --------------------------------------------------------------------------- #
+
 
 def test_build_panel_shape():
     """Output arrays must all have the same length = n_dates * n_assets (no NaN)."""
@@ -125,6 +133,7 @@ def test_build_panel_uniform_weights_when_none():
 def test_build_panel_custom_weights():
     """Provided weights should appear in panel.weights."""
     from datetime import date, timedelta
+
     n_dates, n_assets = 5, 3
     start = date(2020, 1, 2)
     dates = [start + timedelta(days=i) for i in range(n_dates)]

@@ -28,6 +28,7 @@ Public API
 ``WFResult``           — aggregate result from ``walk_forward_cv``.
 ``walk_forward_cv``    — main entry point.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -40,10 +41,10 @@ from .panel import PanelArrays
 from .ridge import ModelResult
 from .scoring import held_out_r2, ic_stats, rank_ic_score, rank_ic_series
 
-
 # --------------------------------------------------------------------------- #
 # FoldScaler
 # --------------------------------------------------------------------------- #
+
 
 class FoldScaler:
     """Per-fold StandardScaler that enforces fit-on-train-only discipline.
@@ -83,6 +84,7 @@ class FoldScaler:
 # --------------------------------------------------------------------------- #
 # Alpha search (inner CV)
 # --------------------------------------------------------------------------- #
+
 
 def _best_alpha(
     X_train: np.ndarray,
@@ -133,6 +135,7 @@ def _best_alpha(
 # --------------------------------------------------------------------------- #
 # Config / result types
 # --------------------------------------------------------------------------- #
+
 
 @dataclass(frozen=True)
 class WalkForwardConfig:
@@ -233,11 +236,14 @@ class WFResult:
 # Main entry point
 # --------------------------------------------------------------------------- #
 
+_DEFAULT_WF_CONFIG = WalkForwardConfig()
+
+
 def walk_forward_cv(
     panel: PanelArrays,
     splitter,
     model_factory,
-    config: WalkForwardConfig = WalkForwardConfig(),
+    config: WalkForwardConfig = _DEFAULT_WF_CONFIG,
 ) -> WFResult:
     """Run walk-forward CV on a ``PanelArrays`` dataset.
 
@@ -288,7 +294,8 @@ def walk_forward_cv(
 
         # inner alpha search
         chosen_alpha = _best_alpha(
-            X_tr, y_tr,
+            X_tr,
+            y_tr,
             config.alpha_grid,
             model_factory,
             w_tr,
@@ -331,15 +338,15 @@ def walk_forward_cv(
 
     all_preds = np.concatenate(all_preds_list) if all_preds_list else np.array([])
     all_true = np.concatenate(all_true_list) if all_true_list else np.array([])
-    all_groups = np.concatenate(all_groups_list) if all_groups_list else np.array([], dtype=np.int64)
+    all_groups = (
+        np.concatenate(all_groups_list) if all_groups_list else np.array([], dtype=np.int64)
+    )
     all_dates = np.concatenate(all_dates_list) if all_dates_list else np.array([], dtype=object)
     all_ids = np.concatenate(all_ids_list) if all_ids_list else np.array([], dtype=np.int64)
 
     r2_arr = np.array([f.test_r2 for f in fold_results])
     all_ic_values = (
-        np.concatenate([f.ic_values for f in fold_results])
-        if fold_results
-        else np.array([])
+        np.concatenate([f.ic_values for f in fold_results]) if fold_results else np.array([])
     )
     stats = ic_stats(all_ic_values)
 

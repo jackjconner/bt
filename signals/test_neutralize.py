@@ -18,7 +18,6 @@ from signals.neutralize import (
     neutralize_sector,
 )
 
-
 SPEC = GenSpec(n_assets=60, n_dates=40, seed=13)
 
 

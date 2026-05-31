@@ -51,7 +51,8 @@ def test_linear_slope_approx_one() -> None:
     """A perfectly linear relationship must yield slope ≈ 1.0."""
     fits = fit_scaling(_linear_measurements(), run_id="test")
     n_assets_fits = [
-        f for f in fits
+        f
+        for f in fits
         if f.scaling_dim == "n_assets" and f.stage == "etl.batch" and f.metric == "elapsed_s"
     ]
     assert len(n_assets_fits) == 1
@@ -64,7 +65,8 @@ def test_quadratic_slope_approx_two() -> None:
     """A quadratic relationship must yield slope ≈ 2.0."""
     fits = fit_scaling(_quadratic_measurements(), run_id="test")
     n_assets_fits = [
-        f for f in fits
+        f
+        for f in fits
         if f.scaling_dim == "n_assets" and f.stage == "backtest" and f.metric == "elapsed_s"
     ]
     assert len(n_assets_fits) == 1
@@ -89,8 +91,16 @@ def test_fits_to_dataframe_schema() -> None:
     """fits_to_dataframe must produce the expected column set."""
     fits = fit_scaling(_linear_measurements(), run_id="test")
     df = fits_to_dataframe(fits)
-    expected_cols = {"run_id", "stage", "metric", "scaling_dim", "log_log_slope",
-                     "intercept", "r_squared", "n_points"}
+    expected_cols = {
+        "run_id",
+        "stage",
+        "metric",
+        "scaling_dim",
+        "log_log_slope",
+        "intercept",
+        "r_squared",
+        "n_points",
+    }
     assert expected_cols.issubset(set(df.columns))
     assert len(df) == len(fits)
 

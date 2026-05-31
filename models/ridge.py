@@ -14,7 +14,7 @@ class ModelConfig:
 
 @dataclass(frozen=True)
 class ModelResult:
-    coef: np.ndarray    # (n_features,)  — O(n_features)
+    coef: np.ndarray  # (n_features,)  — O(n_features)
     intercept: float
     train_r2: float
 

@@ -1,5 +1,6 @@
 """Tests for models.walk_forward — walk-forward CV with scaling, alpha search,
 sample weighting, and IC scoring."""
+
 from __future__ import annotations
 
 from datetime import date, timedelta
@@ -13,10 +14,10 @@ from .ridge import ModelConfig, RidgeModel
 from .splitters import WalkForwardSplitter
 from .walk_forward import FoldScaler, WalkForwardConfig, walk_forward_cv
 
-
 # --------------------------------------------------------------------------- #
 # helpers
 # --------------------------------------------------------------------------- #
+
 
 def _synthetic_panel(n_dates: int = 60, n_assets: int = 10, n_features: int = 5, seed: int = 0):
     """Synthetic panel with mild predictive structure in features."""
@@ -50,6 +51,7 @@ def _synthetic_panel(n_dates: int = 60, n_assets: int = 10, n_features: int = 5,
 # FoldScaler
 # --------------------------------------------------------------------------- #
 
+
 class TestFoldScaler:
     def test_transform_before_fit_raises(self):
         scaler = FoldScaler()
@@ -79,6 +81,7 @@ class TestFoldScaler:
 # --------------------------------------------------------------------------- #
 # walk_forward_cv
 # --------------------------------------------------------------------------- #
+
 
 def test_walk_forward_no_future_leakage():
     """Each fold's train date ordinals must be strictly < test date ordinals."""
@@ -183,7 +186,7 @@ def test_walk_forward_sample_weights():
     # at least one fold should have a different coefficient under weighted vs unweighted
     coefs_w = [fr.fit_result.coef[0] for fr in r_w.fold_results]
     coefs_u = [fr.fit_result.coef[0] for fr in r_u.fold_results]
-    any_diff = any(abs(cw - cu) > 1e-6 for cw, cu in zip(coefs_w, coefs_u))
+    any_diff = any(abs(cw - cu) > 1e-6 for cw, cu in zip(coefs_w, coefs_u, strict=False))
     assert any_diff, f"Expected at least one fold to differ; coefs_w={coefs_w}, coefs_u={coefs_u}"
 
 

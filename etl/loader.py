@@ -22,7 +22,6 @@ from pathlib import Path
 import polars as pl
 
 from .datasets import REGISTRY, GenSpec
-from .schema import SchemaError
 
 
 @dataclass(frozen=True)
@@ -105,15 +104,11 @@ class DatasetLoader:
 
         df = lf.collect(engine="in-memory")
 
-        if self.validate:
-            # Only full-column loads can be validated against the full schema.
-            # When a column subset was requested we skip the schema check for
-            # omitted columns rather than raising a false positive.
-            if columns is None:
-                try:
-                    schema.validate(df)
-                except SchemaError:
-                    raise
+        # Only full-column loads can be validated against the full schema.
+        # When a column subset was requested we skip the schema check for
+        # omitted columns rather than raising a false positive.
+        if self.validate and columns is None:
+            schema.validate(df)
         return df
 
     def scan(

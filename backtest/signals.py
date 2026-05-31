@@ -21,13 +21,9 @@ class SignalFrame:
     ) -> SignalFrame:
         dates = date_axis(n_dates, start)
         ids = pl.int_range(0, n_assets, eager=True)
-        grid = pl.DataFrame({"date": dates}).join(
-            pl.DataFrame({"id": ids}), how="cross"
-        )
+        grid = pl.DataFrame({"date": dates}).join(pl.DataFrame({"id": ids}), how="cross")
         rng = np.random.default_rng(seed)
-        df = grid.with_columns(
-            pl.Series("signal", rng.normal(0.0, 1.0, len(grid)))
-        )
+        df = grid.with_columns(pl.Series("signal", rng.normal(0.0, 1.0, len(grid))))
         return SignalFrame(df=df, is_categorical=False)
 
     @staticmethod
@@ -36,11 +32,7 @@ class SignalFrame:
     ) -> SignalFrame:
         dates = date_axis(n_dates, start)
         ids = pl.int_range(0, n_assets, eager=True)
-        grid = pl.DataFrame({"date": dates}).join(
-            pl.DataFrame({"id": ids}), how="cross"
-        )
+        grid = pl.DataFrame({"date": dates}).join(pl.DataFrame({"id": ids}), how="cross")
         rng = np.random.default_rng(seed)
-        df = grid.with_columns(
-            pl.Series("signal", rng.integers(0, 2, len(grid)).astype(float))
-        )
+        df = grid.with_columns(pl.Series("signal", rng.integers(0, 2, len(grid)).astype(float)))
         return SignalFrame(df=df, is_categorical=True)

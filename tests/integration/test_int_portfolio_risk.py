@@ -48,7 +48,7 @@ def test_factor_risk_model_and_optimizer(synth) -> None:
     opt = mean_variance(alpha_vec, cov, cspec, risk_aversion=1.0, max_iter=3000)
 
     assert opt.converged
-    assert abs(opt.weights.sum() - 1.0) < 1e-4          # net-exposure budget
+    assert abs(opt.weights.sum() - 1.0) < 1e-4  # net-exposure budget
     bounds = cspec.per_asset_bounds()
     lo = np.array([b[0] for b in bounds])
     hi = np.array([b[1] for b in bounds])

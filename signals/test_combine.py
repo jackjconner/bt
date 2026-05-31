@@ -15,17 +15,13 @@ from signals.combine import (
     zscore_blend,
 )
 
-
 SPEC = GenSpec(n_assets=40, n_dates=50, seed=31)
 
 
 def _all_signals() -> list[pl.DataFrame]:
     df = generate("alpha_signals", SPEC)
     names = df["signal_name"].unique().sort().to_list()
-    return [
-        df.filter(pl.col("signal_name") == n).select("date", "id", "signal")
-        for n in names
-    ]
+    return [df.filter(pl.col("signal_name") == n).select("date", "id", "signal") for n in names]
 
 
 def _fwd_returns() -> pl.DataFrame:
@@ -57,6 +53,7 @@ def test_zscore_blend_is_cross_sectionally_standardized():
     sigs = _all_signals()
     result = zscore_blend(sigs)
     from etl.source import to_matrix
+
     mat, _ = to_matrix(result, "signal")
     # All finite values should be within a reasonable range for standardized inputs
     finite = mat[np.isfinite(mat)]
@@ -135,6 +132,7 @@ def test_gram_schmidt_orthogonal_components():
     ortho = gram_schmidt_orthogonalize(sigs)
 
     from etl.source import to_matrix
+
     mats = []
     for df in ortho:
         mat, _ = to_matrix(df, "signal")

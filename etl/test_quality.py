@@ -58,9 +58,7 @@ def test_spike_outlier_detected():
     )
     report = check(spike, "value", spike_z_threshold=4.0)
     assert not report.spike_outliers.is_empty()
-    row = report.spike_outliers.filter(
-        (pl.col("id") == 0) & (pl.col("date") == date(2020, 1, 2))
-    )
+    row = report.spike_outliers.filter((pl.col("id") == 0) & (pl.col("date") == date(2020, 1, 2)))
     assert row.height == 1
     assert abs(row["z_score"][0]) > 4.0
 
@@ -70,9 +68,7 @@ def test_missing_sessions_detected():
     dates = [date(2020, 1, 2), date(2020, 1, 3), date(2020, 1, 6)]
     ids = [0, 1, 2]
     # Remove asset 2 from date 2020-01-03
-    df_gap = df.filter(
-        ~((pl.col("id") == 2) & (pl.col("date") == date(2020, 1, 3)))
-    )
+    df_gap = df.filter(~((pl.col("id") == 2) & (pl.col("date") == date(2020, 1, 3))))
     report = check(df_gap, "value", expected_dates=dates, expected_ids=ids)
     assert not report.missing_sessions.is_empty()
     missing_row = report.missing_sessions.filter(

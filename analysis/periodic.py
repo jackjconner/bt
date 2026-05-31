@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import polars as pl
 
-
 # ---------------------------------------------------------------------------
 # Monthly returns table
 # ---------------------------------------------------------------------------
@@ -33,16 +32,11 @@ def monthly_returns(returns: pl.DataFrame) -> pl.DataFrame:
         pl.col("date").dt.year().alias("year"),
         pl.col("date").dt.month().alias("month"),
     )
-    grouped = (
+    return (
         with_ym.group_by(["year", "month"])
-        .agg(
-            (
-                (1.0 + pl.col("return_1d")).product() - 1.0
-            ).alias("monthly_return")
-        )
+        .agg(((1.0 + pl.col("return_1d")).product() - 1.0).alias("monthly_return"))
         .sort(["year", "month"])
     )
-    return grouped
 
 
 def monthly_returns_wide(returns: pl.DataFrame) -> pl.DataFrame:
@@ -78,9 +72,7 @@ def quarterly_returns(returns: pl.DataFrame) -> pl.DataFrame:
     )
     return (
         with_yq.group_by(["year", "quarter"])
-        .agg(
-            ((1.0 + pl.col("return_1d")).product() - 1.0).alias("quarterly_return")
-        )
+        .agg(((1.0 + pl.col("return_1d")).product() - 1.0).alias("quarterly_return"))
         .sort(["year", "quarter"])
     )
 
@@ -99,8 +91,6 @@ def annual_returns(returns: pl.DataFrame) -> pl.DataFrame:
     with_y = returns.with_columns(pl.col("date").dt.year().alias("year"))
     return (
         with_y.group_by("year")
-        .agg(
-            ((1.0 + pl.col("return_1d")).product() - 1.0).alias("annual_return")
-        )
+        .agg(((1.0 + pl.col("return_1d")).product() - 1.0).alias("annual_return"))
         .sort("year")
     )

@@ -21,6 +21,7 @@ KFold.split: yield train_idx, test_idx) that are safe by construction:
 * ``RollingWindowSplitter`` — fixed-size rolling window: same causality as walk-
   forward but drops the oldest training observations to model non-stationarity.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -28,10 +29,10 @@ from dataclasses import dataclass
 import numpy as np
 import polars as pl
 
-
 # --------------------------------------------------------------------------- #
 # helpers
 # --------------------------------------------------------------------------- #
+
 
 def _sorted_unique_dates(groups: np.ndarray) -> np.ndarray:
     """Return sorted unique date ordinals/indices that appear in ``groups``."""
@@ -47,6 +48,7 @@ def _sample_indices_for_dates(groups: np.ndarray, date_set: np.ndarray) -> np.nd
 # --------------------------------------------------------------------------- #
 # PurgedEmbargoCVSplitter
 # --------------------------------------------------------------------------- #
+
 
 @dataclass(frozen=True)
 class PurgedEmbargoCVSplitter:
@@ -98,9 +100,7 @@ class PurgedEmbargoCVSplitter:
 
         fold_size = n_dates // self.n_splits
         if fold_size == 0:
-            raise ValueError(
-                f"Too few unique dates ({n_dates}) for n_splits={self.n_splits}"
-            )
+            raise ValueError(f"Too few unique dates ({n_dates}) for n_splits={self.n_splits}")
 
         for k in range(self.n_splits):
             test_start_i = k * fold_size
@@ -131,6 +131,7 @@ class PurgedEmbargoCVSplitter:
 # --------------------------------------------------------------------------- #
 # WalkForwardSplitter
 # --------------------------------------------------------------------------- #
+
 
 @dataclass(frozen=True)
 class WalkForwardSplitter:
@@ -195,6 +196,7 @@ class WalkForwardSplitter:
 # RollingWindowSplitter
 # --------------------------------------------------------------------------- #
 
+
 @dataclass(frozen=True)
 class RollingWindowSplitter:
     """Fixed-size rolling window splitter.
@@ -205,7 +207,7 @@ class RollingWindowSplitter:
     """
 
     n_splits: int = 5
-    train_periods: int = 100   # number of unique date-groups in each train window
+    train_periods: int = 100  # number of unique date-groups in each train window
     embargo_periods: int = 0
 
     def split(
@@ -251,6 +253,7 @@ class RollingWindowSplitter:
 # --------------------------------------------------------------------------- #
 # calendar-split helper (consumes cv_splits_calendar dataset)
 # --------------------------------------------------------------------------- #
+
 
 def splits_from_calendar(
     cv_df: pl.DataFrame,

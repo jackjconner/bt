@@ -103,6 +103,7 @@ def check_regressions(
       - ``result_mb`` compared against ``result_mb`` baseline
       - ``peak_rss_mb`` compared against ``peak_rss_mb`` baseline
     """
+
     # Normalise stage column to string for join compatibility (Categorical keys
     # can mismatch across DataFrames built independently).
     def _str_stage(df: pl.DataFrame) -> pl.DataFrame:

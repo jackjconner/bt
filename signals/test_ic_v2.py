@@ -10,7 +10,6 @@ from etl.datasets import GenSpec, generate
 from signals import ic_series_v2
 from signals.coverage import apply_min_coverage, pairwise_mask
 
-
 SPEC = GenSpec(n_assets=30, n_dates=60, seed=42)
 
 

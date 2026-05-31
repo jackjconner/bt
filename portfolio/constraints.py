@@ -7,6 +7,7 @@ owns the feasible set.
 Design: keep all structures pure data (no scipy imports at module level) so
 tests can instantiate ConstraintSpec without pulling in the full scipy stack.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -41,7 +42,7 @@ class ConstraintSpec:
     net_exposure: float = 1.0
     min_gross: float | None = None
     max_gross: float | None = None
-    sector_map: np.ndarray | None = None          # (n_assets,) int labels
+    sector_map: np.ndarray | None = None  # (n_assets,) int labels
     sector_min: dict[int, float] = field(default_factory=dict)
     sector_max: dict[int, float] = field(default_factory=dict)
 
@@ -141,9 +142,9 @@ class ConstraintSpec:
 
 
 def from_polars(
-    position_constraints: object,   # pl.DataFrame (id, min_weight, max_weight, tradable)
-    group_constraints: object,       # pl.DataFrame (sector, min_exposure, max_exposure)
-    security_master: object,         # pl.DataFrame (id, sector, ...)
+    position_constraints: object,  # pl.DataFrame (id, min_weight, max_weight, tradable)
+    group_constraints: object,  # pl.DataFrame (sector, min_exposure, max_exposure)
+    security_master: object,  # pl.DataFrame (id, sector, ...)
     n_assets: int,
     long_only: bool = True,
     net_exposure: float = 1.0,
@@ -166,10 +167,7 @@ def from_polars(
     ids = list(range(n_assets))
 
     # per-asset bounds from position_constraints
-    pc = {
-        row["id"]: row
-        for row in position_constraints.iter_rows(named=True)
-    }
+    pc = {row["id"]: row for row in position_constraints.iter_rows(named=True)}
     min_w = np.zeros(n_assets)
     max_w = np.zeros(n_assets)
     for i in ids:
@@ -188,9 +186,7 @@ def from_polars(
     # sector map: id → sector integer label
     sm = security_master.select("id", "sector")
     # cast categorical to string then map to int
-    unique_sectors = sorted(
-        sm["sector"].cast(pl.String).unique().to_list()
-    )
+    unique_sectors = sorted(sm["sector"].cast(pl.String).unique().to_list())
     sector_str_to_int = {s: i for i, s in enumerate(unique_sectors)}
 
     sector_map = np.zeros(n_assets, dtype=int)

@@ -116,9 +116,7 @@ def check(
     # 2. Missing sessions
     # ------------------------------------------------------------------ #
     if expected_dates is not None and expected_ids is not None:
-        expected = pl.DataFrame(
-            {"date": pl.Series(expected_dates, dtype=pl.Date)}
-        ).join(
+        expected = pl.DataFrame({"date": pl.Series(expected_dates, dtype=pl.Date)}).join(
             pl.DataFrame({"id": pl.Series(expected_ids, dtype=pl.Int64)}),
             how="cross",
         )

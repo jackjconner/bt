@@ -139,14 +139,20 @@ def run_production_pipeline(spec: GenSpec, workdir: Path) -> PipelineSummary:
     # --- backtest: gross vs net of costs --------------------------------- #
     signals = SignalFrame(df=momentum, is_categorical=False)
     gross_cfg = ProductionBacktestConfig(
-        n_assets=spec.n_assets, n_dates=spec.n_dates, enable_universe_mask=True,
+        n_assets=spec.n_assets,
+        n_dates=spec.n_dates,
+        enable_universe_mask=True,
         max_weight=0.1,
     )
     net_cfg = ProductionBacktestConfig(
-        n_assets=spec.n_assets, n_dates=spec.n_dates, enable_universe_mask=True,
-        enable_costs=True, enable_slippage=True, max_weight=0.1,
+        n_assets=spec.n_assets,
+        n_dates=spec.n_dates,
+        enable_universe_mask=True,
+        enable_costs=True,
+        enable_slippage=True,
+        max_weight=0.1,
     )
-    engine_kwargs = dict(prices=prices, transaction_costs=tcosts, universe_mask=umask)
+    engine_kwargs = {"prices": prices, "transaction_costs": tcosts, "universe_mask": umask}
     gross = ProductionBacktestEngine(gross_cfg).run(returns, signals, **engine_kwargs)
     net = ProductionBacktestEngine(net_cfg).run(returns, signals, **engine_kwargs)
 
@@ -198,11 +204,14 @@ def print_pipeline_summary(s: PipelineSummary) -> None:
     print(f"  factor-model vol / tracking error:  {s.factor_vol:.4f} / {s.tracking_error:.4f}")
     print(f"  Sharpe gross / net:                 {s.gross_sharpe:+.3f} / {s.net_sharpe:+.3f}")
     print(f"  cost drag (final NAV gross-net):    {s.cost_drag:,.0f}")
-    print(f"  scaling fits / backtest p50:        {s.n_scaling_fits} / {s.backtest_p50_s * 1000:.1f} ms")
+    print(
+        f"  scaling fits / backtest p50:        "
+        f"{s.n_scaling_fits} / {s.backtest_p50_s * 1000:.1f} ms"
+    )
 
 
 __all__ = [
     "PipelineSummary",
-    "run_production_pipeline",
     "print_pipeline_summary",
+    "run_production_pipeline",
 ]

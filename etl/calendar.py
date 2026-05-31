@@ -50,7 +50,7 @@ def sessions_between(
     exchange:
         Exchange code to filter on.
     """
-    result = (
+    return (
         calendar.filter(
             (pl.col("exchange").cast(pl.String) == exchange)
             & pl.col("is_session")
@@ -60,7 +60,6 @@ def sessions_between(
         .sort("date")["date"]
         .to_list()
     )
-    return result
 
 
 def align_to_calendar(
@@ -93,9 +92,7 @@ def align_to_calendar(
         Left-joined: every (session, id) pair present, extra rows dropped.
     """
     session_df = (
-        calendar.filter(
-            (pl.col("exchange").cast(pl.String) == exchange) & pl.col("is_session")
-        )
+        calendar.filter((pl.col("exchange").cast(pl.String) == exchange) & pl.col("is_session"))
         .select("date")
         .unique()
         .sort("date")
@@ -146,19 +143,15 @@ def fill_sessions(
     if method == "forward":
         # sort so fill_null(strategy="forward") walks time correctly per id
         aligned = aligned.sort("id", "date")
-        aligned = aligned.with_columns(
-            pl.col(c).forward_fill().over("id") for c in value_cols
-        )
+        aligned = aligned.with_columns(pl.col(c).forward_fill().over("id") for c in value_cols)
     elif method == "backward":
         aligned = aligned.sort("id", "date")
-        aligned = aligned.with_columns(
-            pl.col(c).backward_fill().over("id") for c in value_cols
-        )
+        aligned = aligned.with_columns(pl.col(c).backward_fill().over("id") for c in value_cols)
     elif method == "zero":
-        aligned = aligned.with_columns(
-            pl.col(c).fill_null(0.0) for c in value_cols
-        )
+        aligned = aligned.with_columns(pl.col(c).fill_null(0.0) for c in value_cols)
     else:
-        raise ValueError(f"Unknown fill method {method!r}; expected 'forward', 'backward', or 'zero'")
+        raise ValueError(
+            f"Unknown fill method {method!r}; expected 'forward', 'backward', or 'zero'"
+        )
 
     return aligned.sort("date", "id")

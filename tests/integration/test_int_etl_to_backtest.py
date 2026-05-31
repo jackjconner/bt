@@ -26,7 +26,7 @@ def _momentum(loader) -> pl.DataFrame:
 def test_loader_panels_drive_production_backtest(synth) -> None:
     loader, spec = synth.loader, synth.spec
 
-    prices = loader.load("prices")           # schema-validated at load
+    prices = loader.load("prices")  # schema-validated at load
     returns = returns_from_prices(prices)
 
     cfg = ProductionBacktestConfig(
@@ -56,15 +56,17 @@ def test_costs_reduce_terminal_nav(synth) -> None:
     prices = loader.load("prices")
     returns = returns_from_prices(prices)
     sig = SignalFrame(df=_momentum(loader), is_categorical=False)
-    kw = dict(
-        prices=prices,
-        transaction_costs=loader.load("transaction_costs"),
-        universe_mask=loader.load("universe_mask"),
-    )
-    base = dict(
-        n_assets=spec.n_assets, n_dates=spec.n_dates,
-        enable_universe_mask=True, max_weight=0.1,
-    )
+    kw = {
+        "prices": prices,
+        "transaction_costs": loader.load("transaction_costs"),
+        "universe_mask": loader.load("universe_mask"),
+    }
+    base = {
+        "n_assets": spec.n_assets,
+        "n_dates": spec.n_dates,
+        "enable_universe_mask": True,
+        "max_weight": 0.1,
+    }
     gross = ProductionBacktestEngine(ProductionBacktestConfig(**base)).run(returns, sig, **kw)
     net = ProductionBacktestEngine(
         ProductionBacktestConfig(enable_costs=True, enable_slippage=True, **base)

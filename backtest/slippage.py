@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import numpy as np
 
-
 _FALLBACK_IMPACT_BPS = 500.0  # 5% impact for zero-ADV assets — punitive
 
 
@@ -79,7 +78,7 @@ def fill_price_with_slippage(
     """
     if adv > 0.0:
         participation = abs(trade_value) / adv
-        impact_bps = impact_coef * (participation ** 0.5)
+        impact_bps = impact_coef * (participation**0.5)
     else:
         impact_bps = fallback_impact_bps if trade_value != 0.0 else 0.0
     direction = 1.0 if trade_value >= 0.0 else -1.0

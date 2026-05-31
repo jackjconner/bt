@@ -67,9 +67,7 @@ def test_feature_panel_feeds_walk_forward_cv(synth) -> None:
 def test_walk_forward_never_trains_on_future(synth) -> None:
     """The splitter's train indices must all precede its test indices in time."""
     loader = synth.loader
-    panel = build_panel(
-        loader.load("feature_panel"), loader.load("forward_returns"), "fwd_ret_1"
-    )
+    panel = build_panel(loader.load("feature_panel"), loader.load("forward_returns"), "fwd_ret_1")
     splitter = WalkForwardSplitter(n_splits=4, embargo_periods=5)
     for train_idx, test_idx in splitter.split(panel.X, groups=panel.groups):
         if len(train_idx) and len(test_idx):
