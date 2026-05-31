@@ -8,12 +8,8 @@ import numpy as np
 import polars as pl
 
 from .adjust import (
-    _adjust_single_asset,
     _adjust_vectorized,
-    _apply_factor,
     _build_adj_log,
-    _dividend_factor,
-    _split_factor,
     adjust_prices,
 )
 
@@ -168,75 +164,6 @@ def test_multiple_assets_independent():
 # ------------------------------------------------------------------ #
 
 
-def test_split_factor_2for1():
-    row = {"split_ratio": 2.0}
-    f = _split_factor(row)
-    assert f is not None
-    assert abs(f - 0.5) < 1e-12
-
-
-def test_split_factor_3for1():
-    row = {"split_ratio": 3.0}
-    f = _split_factor(row)
-    assert f is not None
-    assert abs(f - 1.0 / 3.0) < 1e-12
-
-
-def test_split_factor_none_ratio_returns_none():
-    assert _split_factor({"split_ratio": None}) is None
-
-
-def test_split_factor_zero_ratio_returns_none():
-    assert _split_factor({"split_ratio": 0.0}) is None
-
-
-def test_split_factor_nan_ratio_returns_none():
-    assert _split_factor({"split_ratio": float("nan")}) is None
-
-
-def test_dividend_factor_basic():
-    """$2 dividend with pre-close $10: factor = 10/(10+2) = 5/6."""
-    row = {"cash_amount": 2.0}
-    f = _dividend_factor(row, pre_close=10.0)
-    assert f is not None
-    assert abs(f - 10.0 / 12.0) < 1e-12
-
-
-def test_dividend_factor_none_cash_returns_none():
-    assert _dividend_factor({"cash_amount": None}, pre_close=10.0) is None
-
-
-def test_dividend_factor_zero_cash_returns_none():
-    assert _dividend_factor({"cash_amount": 0.0}, pre_close=10.0) is None
-
-
-def test_dividend_factor_zero_pre_close_returns_none():
-    assert _dividend_factor({"cash_amount": 1.0}, pre_close=0.0) is None
-
-
-def test_dividend_factor_nan_cash_returns_none():
-    assert _dividend_factor({"cash_amount": float("nan")}, pre_close=10.0) is None
-
-
-def test_apply_factor_partial():
-    """_apply_factor multiplies only indices 0..last_prior inclusive."""
-    factor = np.ones(5)
-    _apply_factor(factor, 0.5, 2)
-    np.testing.assert_array_almost_equal(factor, [0.5, 0.5, 0.5, 1.0, 1.0])
-
-
-def test_apply_factor_all():
-    factor = np.ones(3)
-    _apply_factor(factor, 2.0, 2)
-    np.testing.assert_array_almost_equal(factor, [2.0, 2.0, 2.0])
-
-
-def test_apply_factor_only_first():
-    factor = np.ones(4)
-    _apply_factor(factor, 0.25, 0)
-    np.testing.assert_array_almost_equal(factor, [0.25, 1.0, 1.0, 1.0])
-
-
 def test_build_adj_log_empty():
     log = _build_adj_log([])
     assert log.is_empty()
@@ -255,52 +182,6 @@ def test_build_adj_log_with_rows():
     assert log.schema["id"] == pl.Int64
     assert log.schema["action_type"] == pl.Categorical
     assert abs(log["factor"][0] - 0.5) < 1e-12
-
-
-def test_adjust_single_asset_no_actions():
-    pdf = _prices([10.0, 11.0, 12.0])
-    frame, log_rows = _adjust_single_asset(pdf, None, "close")
-    adj = frame.sort("date")["adj_close"].to_numpy()
-    np.testing.assert_array_equal(adj, [10.0, 11.0, 12.0])
-    assert log_rows == []
-
-
-def test_adjust_single_asset_empty_actions():
-    pdf = _prices([10.0, 11.0, 12.0])
-    empty_ca = pl.DataFrame(
-        schema={
-            "ex_date": pl.Date,
-            "id": pl.Int64,
-            "action_type": pl.Categorical,
-            "split_ratio": pl.Float64,
-            "cash_amount": pl.Float64,
-        }
-    )
-    frame, log_rows = _adjust_single_asset(pdf, empty_ca, "close")
-    adj = frame.sort("date")["adj_close"].to_numpy()
-    np.testing.assert_array_equal(adj, [10.0, 11.0, 12.0])
-    assert log_rows == []
-
-
-def test_adjust_single_asset_split():
-    """2-for-1 split ex_date Jan 4: first two closes halved."""
-    pdf = _prices([10.0, 10.0, 5.0])
-    ca = pl.DataFrame(
-        {
-            "ex_date": pl.Series([date(2020, 1, 4)], dtype=pl.Date),
-            "id": pl.Series([0], dtype=pl.Int64),
-            "action_type": pl.Series(["split"], dtype=pl.Categorical),
-            "split_ratio": pl.Series([2.0], dtype=pl.Float64),
-            "cash_amount": pl.Series([None], dtype=pl.Float64),
-        }
-    )
-    frame, log_rows = _adjust_single_asset(pdf, ca, "close")
-    adj = frame.sort("date")["adj_close"].to_numpy()
-    assert abs(adj[0] - 5.0) < 1e-9
-    assert abs(adj[1] - 5.0) < 1e-9
-    assert abs(adj[2] - 5.0) < 1e-9
-    assert len(log_rows) == 1
-    assert abs(log_rows[0]["factor"] - 0.5) < 1e-12
 
 
 def test_special_dividend_treated_as_cash_dividend():
@@ -348,63 +229,53 @@ def _ca_full(rows: list[dict]) -> pl.DataFrame:
     )
 
 
-def _legacy_oracle(
-    prices: pl.DataFrame, ca: pl.DataFrame, close_col: str = "close"
-) -> pl.DataFrame:
-    """Reference adjusted frame via the retained per-asset path."""
-    ca_rel = ca.filter(
-        pl.col("action_type").cast(pl.String).is_in(["split", "cash_dividend", "special_dividend"])
-    ).sort("ex_date")
-    frames = []
-    for part in prices.sort(["id", "date"]).partition_by("id", maintain_order=True):
-        aid = int(part["id"][0])
-        acts = ca_rel.filter(pl.col("id") == aid)
-        frame, _ = _adjust_single_asset(part, acts if not acts.is_empty() else None, close_col)
-        frames.append(frame)
-    return pl.concat(frames).sort("date", "id")
+def test_vectorized_back_adjusts_known_split_and_dividend_panel():
+    """Direct correctness fixture: whole-panel vectorized adjust on a two-asset
+    panel carrying a split (id 0) and a cash dividend (id 1), checked cell-for-
+    cell against hand-computed back-adjusted closes.
 
-
-def _random_panel(n_assets: int, n_dates: int, seed: int) -> pl.DataFrame:
-    rng = np.random.default_rng(seed)
-    base = date(2020, 1, 1)
-    dates = [base + timedelta(days=i) for i in range(n_dates)]
-    rows_date, rows_id, rows_close = [], [], []
-    for aid in range(n_assets):
-        prices = 50.0 * np.cumprod(1.0 + rng.normal(0.0, 0.02, n_dates))
-        for i, d in enumerate(dates):
-            rows_date.append(d)
-            rows_id.append(aid)
-            rows_close.append(float(prices[i]))
-    return pl.DataFrame(
-        {
-            "date": pl.Series(rows_date, dtype=pl.Date),
-            "id": pl.Series(rows_id, dtype=pl.Int64),
-            "close": pl.Series(rows_close, dtype=pl.Float64),
-        }
+    Asset 0: closes [10, 12, 6, 7] on Jan 2..5, 2-for-1 split ex_date Jan 4.
+      Factor 1/2 applies to every session strictly before Jan 4 (Jan 2, Jan 3);
+      Jan 4 and Jan 5 are on/after ex_date and unchanged.
+    Asset 1: closes [20, 22, 21, 23] on Jan 2..5, $2 cash dividend ex_date Jan 4.
+      Pre-ex close is the Jan 3 close (22.0); factor = 22/(22+2) = 11/12 applies
+      to Jan 2 and Jan 3; Jan 4 and Jan 5 unchanged.
+    """
+    p0 = _prices([10.0, 12.0, 6.0, 7.0], asset_id=0)
+    p1 = _prices([20.0, 22.0, 21.0, 23.0], asset_id=1)
+    prices = pl.concat([p0, p1])
+    ca = _ca_full(
+        [
+            {"ex_date": date(2020, 1, 4), "id": 0, "action_type": "split", "split_ratio": 2.0},
+            {
+                "ex_date": date(2020, 1, 4),
+                "id": 1,
+                "action_type": "cash_dividend",
+                "cash_amount": 2.0,
+            },
+        ]
     )
+    result = _adjust_vectorized(prices, ca, "close")
+    adj = result.prices.sort("id", "date")
 
+    a0 = adj.filter(pl.col("id") == 0)["adj_close"].to_numpy()
+    np.testing.assert_allclose(a0, [5.0, 6.0, 6.0, 7.0], rtol=0, atol=1e-9)
 
-def test_vectorized_matches_legacy_oracle_random():
-    """Whole-panel vectorized adjust == per-asset legacy path, cell for cell."""
-    prices = _random_panel(n_assets=12, n_dates=40, seed=7)
-    base = date(2020, 1, 1)
-    rng = np.random.default_rng(99)
-    rows = []
-    for _ in range(20):
-        aid = int(rng.integers(0, 12))
-        ex = base + timedelta(days=int(rng.integers(0, 40)))
-        if rng.random() < 0.5:
-            rows.append({"ex_date": ex, "id": aid, "action_type": "split", "split_ratio": 2.0})
-        else:
-            rows.append(
-                {"ex_date": ex, "id": aid, "action_type": "cash_dividend", "cash_amount": 0.4}
-            )
-    ca = _ca_full(rows)
-    got = _adjust_vectorized(prices, ca, "close").prices.sort("date", "id")
-    want = _legacy_oracle(prices, ca).sort("date", "id")
-    np.testing.assert_allclose(
-        got["adj_close"].to_numpy(), want["adj_close"].to_numpy(), rtol=1e-9, atol=1e-9
+    div_f = 22.0 / (22.0 + 2.0)
+    a1 = adj.filter(pl.col("id") == 1)["adj_close"].to_numpy()
+    np.testing.assert_allclose(a1, [20.0 * div_f, 22.0 * div_f, 21.0, 23.0], rtol=0, atol=1e-9)
+
+    # Both actions back-adjust prior history, so both are recorded in the log.
+    assert result.adj_log.height == 2
+    factors = dict(
+        zip(
+            result.adj_log["id"].to_list(),
+            result.adj_log["factor"].to_list(),
+            strict=True,
+        )
     )
+    assert abs(factors[0] - 0.5) < 1e-12
+    assert abs(factors[1] - div_f) < 1e-12
 
 
 def test_vectorized_two_splits_same_asset_compound():
