@@ -134,14 +134,19 @@ def neutralize_sector(
         if col_idx is not None and row[sector_col] is not None:
             sector_arr[col_idx, sector_to_idx[row[sector_col]]] = 1.0
 
-    out_rows: list[dict] = []
-    for t, d in enumerate(s_dates):
-        y = S[t]
-        resid = _ols_residual(y, sector_arr)
-        for asset_col, asset_id in enumerate(ids):
-            out_rows.append({"date": d, "id": asset_id, signal_col: resid[asset_col]})
+    n_dates = len(s_dates)
+    n_ids = len(ids)
+    resid_mat = np.empty((n_dates, n_ids), dtype=np.float64)
+    for t in range(n_dates):
+        resid_mat[t] = _ols_residual(S[t], sector_arr)
 
-    return pl.DataFrame(out_rows).with_columns(
+    # Build output DataFrame directly from arrays — avoids per-row dict overhead.
+    # Each date is repeated n_ids times (row-major matches resid_mat.ravel()).
+    dates_ser = pl.Series("date", s_dates).repeat_by(n_ids).explode()
+    ids_ser = pl.Series("id", ids * n_dates)
+    signals_ser = pl.Series(signal_col, resid_mat.ravel())
+
+    return pl.DataFrame([dates_ser, ids_ser, signals_ser]).with_columns(
         pl.col("id").cast(pl.Int64),
         pl.col(signal_col).cast(pl.Float64),
     )
@@ -187,22 +192,26 @@ def neutralize_factors(
     ids = sorted(signals["id"].unique().to_list())
     id_to_col = {v: i for i, v in enumerate(ids)}
 
-    out_rows: list[dict] = []
+    n_dates = len(s_dates)
+    n_ids = len(ids)
+    resid_mat = np.empty((n_dates, n_ids), dtype=np.float64)
     for t, d in enumerate(s_dates):
         y = S[t]
         # Build factor matrix for this date: (n_assets, n_factors)
-        X = np.full((len(ids), n_factors), np.nan)
+        X = np.full((n_ids, n_factors), np.nan)
         for aid in ids:
             ci = id_to_col[aid]
             key = (d, aid)
             if key in loading_map:
                 X[ci] = loading_map[key]
+        resid_mat[t] = _ols_residual(y, X)
 
-        resid = _ols_residual(y, X)
-        for asset_col, asset_id in enumerate(ids):
-            out_rows.append({"date": d, "id": asset_id, signal_col: resid[asset_col]})
+    # Build output DataFrame directly from arrays — avoids per-row dict overhead.
+    dates_ser = pl.Series("date", s_dates).repeat_by(n_ids).explode()
+    ids_ser = pl.Series("id", ids * n_dates)
+    signals_ser = pl.Series(signal_col, resid_mat.ravel())
 
-    return pl.DataFrame(out_rows).with_columns(
+    return pl.DataFrame([dates_ser, ids_ser, signals_ser]).with_columns(
         pl.col("id").cast(pl.Int64),
         pl.col(signal_col).cast(pl.Float64),
     )
