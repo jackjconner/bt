@@ -29,12 +29,11 @@ l1_ratio=0 convergence; spearmanr ConstantInput) from intentional edge-case
 tests in models/.
 
 **Open loop follow-ups (round 007):**
-- `scripts/gate eval` resolves the golden at the *worktree* root, but
-  `.oversight/golden.json` is gitignored and absent in fresh worktrees — all 7
-  round-007 workers had to copy it in from the primary. Fix: have `gate eval`
-  resolve the golden from the common git dir (`git rev-parse --git-common-dir`'s
-  parent) so workers don't hand-provision it. Small, worth doing before the next
-  multi-worker round. (Not done — flagged, awaiting go.)
+- ~~`scripts/gate eval` resolves the golden at the *worktree* root~~ **FIXED:**
+  `gate` now resolves the golden from `dirname $(git rev-parse --git-common-dir)`
+  (the primary checkout) so a fresh worktree finds `.oversight/golden.json`
+  without hand-copying it. cwd/TMPDIR stay pinned to the worktree; only the golden
+  path resolves to primary. Verified from both primary and a throwaway worktree.
 - `consolidate-check` for `gate` (branch-vs-main PipelineSummary diff) still open
   from round 006.
 - `FEATURE_BACKLOG.md` still-queued: F-006 (portfolio EWMA factor-cov), F-008
