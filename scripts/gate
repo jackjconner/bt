@@ -28,7 +28,12 @@ cd "$ROOT"
 # shellcheck source=/dev/null
 . "$ROOT/scripts/diskguard" >/dev/null
 
-GOLDEN="$ROOT/.oversight/golden.json"
+# The round golden lives in `.oversight/` (gitignored), which exists only in the
+# PRIMARY checkout — a fresh worktree doesn't have it. Resolve it from the common
+# git dir's parent (the primary worktree root) so a worker never hand-copies it
+# in. In the primary checkout this is identical to ROOT.
+PRIMARY_ROOT="$(dirname "$(cd "$(git rev-parse --git-common-dir)" && pwd)")"
+GOLDEN="$PRIMARY_ROOT/.oversight/golden.json"
 
 _sub="${1:-}"
 shift 2>/dev/null || true
