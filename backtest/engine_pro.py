@@ -419,26 +419,51 @@ def _preprocess_inputs(
     """Pivot all optional long-format DataFrames to dense (n_dates, n_assets) matrices.
 
     Pre-process once here so the inner loop is O(n_assets) per bar.
+
+    Each DataFrame is sorted once and reshaped in a single NumPy call rather
+    than pivoting once per column, which eliminates N-1 redundant Polars sort +
+    pivot passes and is the dominant cost at large (n_assets, n_dates).
     """
-    return {
-        "close": _to_matrix_or_none(prices, "close", n_dates, n_assets),
-        "adv_20": _to_matrix_or_none(prices, "adv_20", n_dates, n_assets),
-        "commission_bps": _to_matrix_or_none(
-            transaction_costs, "commission_bps", n_dates, n_assets
-        ),
-        "half_spread_bps": _to_matrix_or_none(
-            transaction_costs, "half_spread_bps", n_dates, n_assets
-        ),
-        "exchange_fee_bps": _to_matrix_or_none(
-            transaction_costs, "exchange_fee_bps", n_dates, n_assets
-        ),
-        "min_commission": _to_matrix_or_none(
-            transaction_costs, "min_commission", n_dates, n_assets
-        ),
-        "impact_coef": _to_matrix_or_none(transaction_costs, "impact_coef", n_dates, n_assets),
-        "tradable": _to_bool_matrix_or_none(universe_mask, "tradable", n_dates, n_assets),
-        "borrow_rate_bps": _to_matrix_or_none(borrow_rates, "borrow_rate_bps", n_dates, n_assets),
-    }
+    result: dict[str, np.ndarray | None] = {}
+
+    if prices is not None:
+        pm = _df_to_multi_matrix(prices, ["close", "adv_20"], n_dates, n_assets, copy=True)
+        result["close"] = pm.get("close")
+        result["adv_20"] = pm.get("adv_20")
+    else:
+        result["close"] = None
+        result["adv_20"] = None
+
+    if transaction_costs is not None:
+        tc_cols = [
+            "commission_bps",
+            "half_spread_bps",
+            "exchange_fee_bps",
+            "min_commission",
+            "impact_coef",
+        ]
+        tm = _df_to_multi_matrix(transaction_costs, tc_cols, n_dates, n_assets, copy=False)
+        result["commission_bps"] = tm.get("commission_bps")
+        result["half_spread_bps"] = tm.get("half_spread_bps")
+        result["exchange_fee_bps"] = tm.get("exchange_fee_bps")
+        result["min_commission"] = tm.get("min_commission")
+        result["impact_coef"] = tm.get("impact_coef")
+    else:
+        result["commission_bps"] = None
+        result["half_spread_bps"] = None
+        result["exchange_fee_bps"] = None
+        result["min_commission"] = None
+        result["impact_coef"] = None
+
+    result["tradable"] = _to_bool_matrix_or_none(universe_mask, "tradable", n_dates, n_assets)
+
+    if borrow_rates is not None:
+        bm = _df_to_multi_matrix(borrow_rates, ["borrow_rate_bps"], n_dates, n_assets, copy=False)
+        result["borrow_rate_bps"] = bm.get("borrow_rate_bps")
+    else:
+        result["borrow_rate_bps"] = None
+
+    return result
 
 
 def _resolve_weight_bounds(
@@ -958,6 +983,50 @@ def _execute_rebalance(
 # --------------------------------------------------------------------------- #
 
 
+def _df_to_multi_matrix(
+    df: pl.DataFrame,
+    cols: list[str],
+    n_dates: int,
+    n_assets: int,
+    *,
+    copy: bool,
+) -> dict[str, np.ndarray]:
+    """Sort once and reshape to (n_dates, n_assets) for each requested column.
+
+    Avoids repeating the Polars sort+pivot cost once per column — the dominant
+    expense in ``_preprocess_inputs`` at large grid points.  Columns absent
+    from ``df`` are silently omitted from the returned dict.
+
+    The reshape assumes the frame is a complete (date × id) grid with no
+    missing cells and no duplicate (date, id) pairs.  All datasets produced by
+    ``write_all`` satisfy this invariant.
+
+    Parameters
+    ----------
+    df:
+        Long-format frame with at least ``date``, ``id``, and the requested
+        value columns.
+    cols:
+        Value columns to extract; subset intersection with ``df.columns`` is
+        used so callers do not need to filter beforehand.
+    n_dates, n_assets:
+        Expected grid dimensions (used for the reshape).
+    copy:
+        When ``True``, return writable copies so callers can mutate in-place
+        (e.g. corporate-action patches).  When ``False``, the slices may share
+        the underlying buffer — safe for read-only consumers.
+    """
+    present = [c for c in cols if c in df.columns]
+    if not present:
+        return {}
+    sorted_df = df.select(["date", "id", *present]).sort(["date", "id"])
+    block = sorted_df.select(present).to_numpy()  # (n_dates * n_assets, n_cols)
+    block_3d = block.reshape(n_dates, n_assets, len(present))
+    if copy:
+        return {col: block_3d[:, :, i].copy() for i, col in enumerate(present)}
+    return {col: block_3d[:, :, i] for i, col in enumerate(present)}
+
+
 def _to_matrix_or_none(
     df: pl.DataFrame | None,
     col: str,
@@ -980,11 +1049,11 @@ def _to_bool_matrix_or_none(
     n_dates: int,
     n_assets: int,
 ) -> np.ndarray | None:
-    """Same as ``_to_matrix_or_none`` but casts to bool."""
+    """Sort once, reshape, and cast to bool — avoids the pivot overhead."""
     if df is None or col not in df.columns:
         return None
-    mat, _ = to_matrix(df.select("date", "id", pl.col(col).cast(pl.Float64).alias(col)), col)
-    return mat.astype(bool)
+    sorted_col = df.select(["date", "id", col]).sort(["date", "id"])[col]
+    return sorted_col.to_numpy().reshape(n_dates, n_assets).astype(bool)
 
 
 def _validate_universe(returns: pl.DataFrame, signals_df: pl.DataFrame) -> None:
