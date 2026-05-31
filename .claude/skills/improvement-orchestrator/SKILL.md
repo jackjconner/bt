@@ -45,9 +45,10 @@ clearly better / opens flagged headroom **may** merge (your call, justified in t
 writeup). Pure losers are **discarded** — log their learning to `SPIKES.md` and
 record the round `spiked`.
 
-**The explore tournament (this skill is the source of truth).** Given a target and
-K (3–4) deliberately *divergent* strategy briefs (e.g. lazy-Polars rewrite /
-numpy-core inner / a different algorithm):
+**The explore tournament.** Run it as plain parallel `Agent` dispatch that you
+supervise — no workflow runner, so worktree isolation and cleanup stay under your
+control. Given a target and K (3–4) deliberately *divergent* strategy briefs
+(e.g. lazy-Polars rewrite / numpy-core inner / a different algorithm):
 
 1. Fan out K workers, one per strategy, each in its own worktree
    `git worktree add .worktrees/explore-<slug>-<k> -b explore/<slug>-<k> main`,
@@ -56,8 +57,7 @@ numpy-core inner / a different algorithm):
    gate-outcome / magnitude / structural quality / headroom opened / risk, and
    returns a ranked list.
 3. Apply the hybrid reward to the ranking: merge the winner (or a strong tie),
-   spike the rest. `.claude/workflows/explore-tournament.js` encodes the same
-   flow as a named workflow, but this procedure is authoritative.
+   spike the rest, recording discards in `SPIKES.md`.
 
 ## The round
 

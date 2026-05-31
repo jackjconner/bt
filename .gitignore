@@ -12,6 +12,10 @@ wheels/
 # Improvement-loop worker worktrees
 .worktrees/
 
+# Workflow-tool isolated worktrees (explore-tournament etc.) — full repo copies
+# ty/ruff would otherwise scan them as duplicate modules.
+.claude/worktrees/
+
 # Oversight deck runtime state (round_state.json, history parquet, artifacts)
 .oversight/
 
