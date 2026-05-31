@@ -68,6 +68,66 @@ class QualityReport:
         return "\n".join(lines)
 
 
+def _check_duplicates(df: pl.DataFrame) -> pl.DataFrame:
+    """Return (date, id, n_dupes) for any key that appears more than once."""
+    return (
+        df.select("date", "id")
+        .group_by("date", "id")
+        .len()
+        .filter(pl.col("len") > 1)
+        .rename({"len": "n_dupes"})
+        .sort("date", "id")
+    )
+
+
+def _check_missing_sessions(
+    df: pl.DataFrame,
+    expected_dates: list[date] | None,
+    expected_ids: list[int] | None,
+) -> pl.DataFrame:
+    """Return (date, id) pairs from the expected cross-product absent in df."""
+    if expected_dates is None or expected_ids is None:
+        return pl.DataFrame(schema={"date": pl.Date, "id": pl.Int64})
+    expected = pl.DataFrame({"date": pl.Series(expected_dates, dtype=pl.Date)}).join(
+        pl.DataFrame({"id": pl.Series(expected_ids, dtype=pl.Int64)}),
+        how="cross",
+    )
+    present = df.select("date", "id").unique()
+    return expected.join(present, on=["date", "id"], how="anti").sort("date", "id")
+
+
+def _check_frozen_series(df: pl.DataFrame, value_col: str) -> pl.DataFrame:
+    """Return assets whose value column has std == 0 (or only one observation)."""
+    return (
+        df.group_by("id")
+        .agg(
+            pl.col(value_col).std().alias("_std"),
+            pl.col(value_col).count().alias("n_obs"),
+            pl.col(value_col).first().alias("value_constant"),
+        )
+        .filter(pl.col("_std").is_null() | (pl.col("_std") == 0.0))
+        .drop("_std")
+        .sort("id")
+    )
+
+
+def _check_spike_outliers(
+    df: pl.DataFrame, value_col: str, spike_z_threshold: float
+) -> pl.DataFrame:
+    """Return (date, id, value, z_score) for cross-sectional outliers above threshold."""
+    with_z = df.with_columns(
+        (
+            (pl.col(value_col) - pl.col(value_col).mean().over("date"))
+            / (pl.col(value_col).std().over("date") + 1e-12)
+        ).alias("_z")
+    )
+    return (
+        with_z.filter(pl.col("_z").abs() > spike_z_threshold)
+        .select("date", "id", pl.col(value_col).alias("value"), pl.col("_z").alias("z_score"))
+        .sort("date", "id")
+    )
+
+
 def check(
     df: pl.DataFrame,
     value_col: str,
@@ -100,65 +160,9 @@ def check(
     -------
     QualityReport
     """
-    # ------------------------------------------------------------------ #
-    # 1. Duplicate (date, id) keys
-    # ------------------------------------------------------------------ #
-    dup = (
-        df.select("date", "id")
-        .group_by("date", "id")
-        .len()
-        .filter(pl.col("len") > 1)
-        .rename({"len": "n_dupes"})
-        .sort("date", "id")
-    )
-
-    # ------------------------------------------------------------------ #
-    # 2. Missing sessions
-    # ------------------------------------------------------------------ #
-    if expected_dates is not None and expected_ids is not None:
-        expected = pl.DataFrame({"date": pl.Series(expected_dates, dtype=pl.Date)}).join(
-            pl.DataFrame({"id": pl.Series(expected_ids, dtype=pl.Int64)}),
-            how="cross",
-        )
-        present = df.select("date", "id").unique()
-        missing = expected.join(present, on=["date", "id"], how="anti").sort("date", "id")
-    else:
-        missing = pl.DataFrame(schema={"date": pl.Date, "id": pl.Int64})
-
-    # ------------------------------------------------------------------ #
-    # 3. Frozen / zero-variance series
-    # ------------------------------------------------------------------ #
-    # std == 0 across all observations for a given id
-    stats = (
-        df.group_by("id")
-        .agg(
-            pl.col(value_col).std().alias("_std"),
-            pl.col(value_col).count().alias("n_obs"),
-            pl.col(value_col).first().alias("value_constant"),
-        )
-        .filter(pl.col("_std").is_null() | (pl.col("_std") == 0.0))
-        .drop("_std")
-        .sort("id")
-    )
-
-    # ------------------------------------------------------------------ #
-    # 4. Return-spike outliers (cross-sectional z-score per date)
-    # ------------------------------------------------------------------ #
-    with_z = df.with_columns(
-        (
-            (pl.col(value_col) - pl.col(value_col).mean().over("date"))
-            / (pl.col(value_col).std().over("date") + 1e-12)
-        ).alias("_z")
-    )
-    spikes = (
-        with_z.filter(pl.col("_z").abs() > spike_z_threshold)
-        .select("date", "id", pl.col(value_col).alias("value"), pl.col("_z").alias("z_score"))
-        .sort("date", "id")
-    )
-
     return QualityReport(
-        duplicate_keys=dup,
-        missing_sessions=missing,
-        frozen_series=stats,
-        spike_outliers=spikes,
+        duplicate_keys=_check_duplicates(df),
+        missing_sessions=_check_missing_sessions(df, expected_dates, expected_ids),
+        frozen_series=_check_frozen_series(df, value_col),
+        spike_outliers=_check_spike_outliers(df, value_col, spike_z_threshold),
     )

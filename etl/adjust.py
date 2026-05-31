@@ -47,6 +47,85 @@ class AdjustmentResult:
     adj_log: pl.DataFrame  # ex_date, id, action_type, factor
 
 
+def _split_factor(action_row: dict) -> float | None:
+    """Return the back-adjustment factor for a split action, or None to skip."""
+    ratio = action_row.get("split_ratio")
+    if ratio is None or np.isnan(ratio) or ratio <= 0:
+        return None
+    return 1.0 / ratio
+
+
+def _dividend_factor(action_row: dict, pre_close: float) -> float | None:
+    """Return the back-adjustment factor for a cash/special dividend, or None to skip."""
+    cash = action_row.get("cash_amount")
+    if cash is None or np.isnan(cash) or cash <= 0 or pre_close <= 0:
+        return None
+    return pre_close / (pre_close + cash)
+
+
+def _apply_factor(factor: np.ndarray, f: float, last_prior: int) -> None:
+    """Multiply ``factor[0:last_prior+1]`` by ``f`` in-place."""
+    for i in range(last_prior + 1):
+        factor[i] *= f
+
+
+def _adjust_single_asset(
+    pdf: pl.DataFrame,
+    actions: pl.DataFrame | None,
+    close_col: str,
+) -> tuple[pl.DataFrame, list[dict]]:
+    """Compute adjusted close for one asset; return extended frame and log rows."""
+    dates = pdf["date"].to_list()
+    closes = pdf[close_col].to_numpy().copy()
+    factor = np.ones(len(dates))
+    log_rows: list[dict] = []
+
+    if actions is not None and not actions.is_empty():
+        for action_row in actions.iter_rows(named=True):
+            ex_date = action_row["ex_date"]
+            atype = str(action_row["action_type"])
+            prior_indices = [i for i, d in enumerate(dates) if d < ex_date]
+            if not prior_indices:
+                continue
+            last_prior = prior_indices[-1]
+            pre_close = closes[last_prior]
+
+            if atype == "split":
+                f = _split_factor(action_row)
+            elif atype in ("cash_dividend", "special_dividend"):
+                f = _dividend_factor(action_row, pre_close)
+            else:
+                f = None
+
+            if f is None:
+                continue
+
+            _apply_factor(factor, f, last_prior)
+            log_rows.append(
+                {"ex_date": ex_date, "id": action_row["id"], "action_type": atype, "factor": f}
+            )
+
+    adj_close = closes * factor
+    return pdf.with_columns(pl.Series("adj_close", adj_close)), log_rows
+
+
+def _build_adj_log(log_rows: list[dict]) -> pl.DataFrame:
+    """Assemble the audit log DataFrame from raw row dicts."""
+    if log_rows:
+        return pl.DataFrame(log_rows).with_columns(
+            pl.col("id").cast(pl.Int64),
+            pl.col("action_type").cast(pl.Categorical),
+        )
+    return pl.DataFrame(
+        schema={
+            "ex_date": pl.Date,
+            "id": pl.Int64,
+            "action_type": pl.Categorical,
+            "factor": pl.Float64,
+        }
+    )
+
+
 def adjust_prices(
     prices: pl.DataFrame,
     corporate_actions: pl.DataFrame,
@@ -86,73 +165,23 @@ def adjust_prices(
     ca_by_id = {aid: ca.filter(pl.col("id") == aid).sort("ex_date") for aid in ids}
 
     adj_frames: list[pl.DataFrame] = []
-    log_rows: list[dict] = []
+    all_log_rows: list[dict] = []
 
     for aid in ids:
         pdf = all_prices_by_id[aid]
         if pdf.is_empty():
             continue
-        dates = pdf["date"].to_list()
-        closes = pdf[close_col].to_numpy().copy()
-        factor = np.ones(len(dates))  # cumulative adjustment factor per row
-
         actions = ca_by_id.get(aid)
-        if actions is not None and not actions.is_empty():
-            for action_row in actions.iter_rows(named=True):
-                ex_date = action_row["ex_date"]
-                atype = str(action_row["action_type"])
-                # Find the index of the last price *before* ex_date.
-                prior_indices = [i for i, d in enumerate(dates) if d < ex_date]
-                if not prior_indices:
-                    continue
-                last_prior = prior_indices[-1]
-                pre_close = closes[last_prior]
-
-                if atype == "split":
-                    ratio = action_row.get("split_ratio")
-                    if ratio is None or np.isnan(ratio) or ratio <= 0:
-                        continue
-                    # Divide all prices strictly before ex_date by the ratio.
-                    f = 1.0 / ratio
-                    for i in range(last_prior + 1):
-                        factor[i] *= f
-                    log_rows.append(
-                        {"ex_date": ex_date, "id": aid, "action_type": atype, "factor": f}
-                    )
-
-                elif atype in ("cash_dividend", "special_dividend"):
-                    cash = action_row.get("cash_amount")
-                    if cash is None or np.isnan(cash) or cash <= 0 or pre_close <= 0:
-                        continue
-                    # pre-ex-date prices are deflated by the dividend yield
-                    f = pre_close / (pre_close + cash)
-                    for i in range(last_prior + 1):
-                        factor[i] *= f
-                    log_rows.append(
-                        {"ex_date": ex_date, "id": aid, "action_type": atype, "factor": f}
-                    )
-
-        adj_close = closes * factor
-        adj_frames.append(pdf.with_columns(pl.Series("adj_close", adj_close)))
+        adj_frame, log_rows = _adjust_single_asset(pdf, actions, close_col)
+        adj_frames.append(adj_frame)
+        all_log_rows.extend(log_rows)
 
     if adj_frames:
         result_prices = pl.concat(adj_frames).sort("date", "id")
     else:
         result_prices = prices.with_columns(pl.col(close_col).alias("adj_close"))
 
-    if log_rows:
-        adj_log = pl.DataFrame(log_rows).with_columns(
-            pl.col("id").cast(pl.Int64),
-            pl.col("action_type").cast(pl.Categorical),
-        )
-    else:
-        adj_log = pl.DataFrame(
-            schema={
-                "ex_date": pl.Date,
-                "id": pl.Int64,
-                "action_type": pl.Categorical,
-                "factor": pl.Float64,
-            }
-        )
-
-    return AdjustmentResult(prices=result_prices, adj_log=adj_log)
+    return AdjustmentResult(
+        prices=result_prices,
+        adj_log=_build_adj_log(all_log_rows),
+    )

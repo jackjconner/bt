@@ -6,7 +6,13 @@ from datetime import date
 
 import polars as pl
 
-from .quality import check
+from .quality import (
+    _check_duplicates,
+    _check_frozen_series,
+    _check_missing_sessions,
+    _check_spike_outliers,
+    check,
+)
 
 
 def _clean_frame(n_ids: int = 20) -> pl.DataFrame:
@@ -102,3 +108,130 @@ def test_spike_threshold_respected():
     )
     report = check(mild, "value", spike_z_threshold=10.0)
     assert report.spike_outliers.is_empty()
+
+
+# ------------------------------------------------------------------ #
+# Unit tests for extracted helpers
+# ------------------------------------------------------------------ #
+
+
+def test_check_duplicates_no_dupes():
+    df = _clean_frame()
+    dup = _check_duplicates(df)
+    assert dup.is_empty()
+
+
+def test_check_duplicates_finds_dupe():
+    df = _clean_frame()
+    duped = pl.concat([df, df.head(1)])
+    dup = _check_duplicates(duped)
+    assert dup.height >= 1
+    assert dup["n_dupes"][0] == 2
+
+
+def test_check_duplicates_schema():
+    df = _clean_frame()
+    dup = _check_duplicates(df)
+    assert "date" in dup.columns
+    assert "id" in dup.columns
+    assert "n_dupes" in dup.columns
+
+
+def test_check_missing_sessions_no_expected_returns_empty():
+    df = _clean_frame()
+    missing = _check_missing_sessions(df, None, None)
+    assert missing.is_empty()
+    assert "date" in missing.columns
+    assert "id" in missing.columns
+
+
+def test_check_missing_sessions_partial_expected():
+    """Only one id listed in expected_ids — gaps for unlisted ids not flagged."""
+    df = _clean_frame(n_ids=3)
+    dates = [date(2020, 1, 2), date(2020, 1, 3), date(2020, 1, 6)]
+    # Remove id=0 from one date
+    df_gap = df.filter(~((pl.col("id") == 0) & (pl.col("date") == date(2020, 1, 3))))
+    missing = _check_missing_sessions(df_gap, dates, [0, 1, 2])
+    assert missing.height == 1
+    assert missing["id"][0] == 0
+    assert missing["date"][0] == date(2020, 1, 3)
+
+
+def test_check_missing_sessions_no_gap():
+    df = _clean_frame(n_ids=3)
+    dates = [date(2020, 1, 2), date(2020, 1, 3), date(2020, 1, 6)]
+    missing = _check_missing_sessions(df, dates, [0, 1, 2])
+    assert missing.is_empty()
+
+
+def test_check_frozen_series_clean():
+    df = _clean_frame()
+    frozen = _check_frozen_series(df, "value")
+    assert frozen.is_empty()
+
+
+def test_check_frozen_series_detects_flat():
+    df = _clean_frame()
+    flat = df.with_columns(
+        pl.when(pl.col("id") == 5).then(pl.lit(42.0)).otherwise(pl.col("value")).alias("value")
+    )
+    frozen = _check_frozen_series(flat, "value")
+    assert 5 in frozen["id"].to_list()
+
+
+def test_check_frozen_series_single_obs():
+    """An asset with only one observation has std=null → should be flagged as frozen."""
+    single = pl.DataFrame(
+        {
+            "date": pl.Series([date(2020, 1, 2)], dtype=pl.Date),
+            "id": pl.Series([99], dtype=pl.Int64),
+            "value": pl.Series([7.0], dtype=pl.Float64),
+        }
+    )
+    frozen = _check_frozen_series(single, "value")
+    assert 99 in frozen["id"].to_list()
+
+
+def test_check_spike_outliers_no_spikes():
+    df = _clean_frame()
+    spikes = _check_spike_outliers(df, "value", spike_z_threshold=10.0)
+    assert spikes.is_empty()
+
+
+def test_check_spike_outliers_finds_spike():
+    # With 20 assets and values 1-20, a 1000x spike on asset 0 gives z ≈ 4.25
+    # (sample std is inflated by the spike itself).  Use threshold 4.0 to flag it.
+    df = _clean_frame()
+    spiked = df.with_columns(
+        pl.when((pl.col("id") == 0) & (pl.col("date") == date(2020, 1, 2)))
+        .then(pl.lit(9999.0))
+        .otherwise(pl.col("value"))
+        .alias("value")
+    )
+    spikes = _check_spike_outliers(spiked, "value", spike_z_threshold=4.0)
+    assert spikes.height >= 1
+    flagged = spikes.filter((pl.col("id") == 0) & (pl.col("date") == date(2020, 1, 2)))
+    assert flagged.height == 1
+    assert abs(flagged["z_score"][0]) > 4.0
+
+
+def test_check_spike_outliers_threshold_gates():
+    """A modest outlier must not be flagged under a high threshold."""
+    df = _clean_frame()
+    slightly_off = df.with_columns(
+        pl.when((pl.col("id") == 0) & (pl.col("date") == date(2020, 1, 2)))
+        .then(pl.lit(3.0))
+        .otherwise(pl.col("value"))
+        .alias("value")
+    )
+    spikes = _check_spike_outliers(slightly_off, "value", spike_z_threshold=100.0)
+    assert spikes.is_empty()
+
+
+def test_check_spike_outliers_schema():
+    df = _clean_frame()
+    spikes = _check_spike_outliers(df, "value", spike_z_threshold=10.0)
+    assert "date" in spikes.columns
+    assert "id" in spikes.columns
+    assert "value" in spikes.columns
+    assert "z_score" in spikes.columns
