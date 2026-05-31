@@ -28,8 +28,6 @@ from scipy import stats
 
 from etl.source import to_matrix
 
-from .coverage import pairwise_mask
-
 
 @dataclass(frozen=True)
 class QuantileResult:
@@ -56,6 +54,73 @@ class QuantileResult:
     +1 = perfectly monotone rising, −1 = perfectly monotone falling."""
 
     n_quantiles: int
+
+
+def _quantile_spread_rows_vectorized(
+    Sc: np.ndarray,
+    Rc: np.ndarray,
+    common: list,
+    n_quantiles: int,
+    min_obs: int,
+) -> tuple[list, list[float]]:
+    """Vectorized bucket computation for row-homogeneous arrays.
+
+    Each row in Sc / Rc is either entirely finite (all n_assets valid) or
+    entirely NaN — typical when forward returns have NaN only at the tail.
+    Processes the fully-valid rows with a single batch ``rankdata`` call and
+    NumPy bin-sums instead of a per-date Python loop.
+
+    Returns (rows, spreads) matching the per-date loop's output.
+    """
+    _, n_assets = Sc.shape
+    mask = np.isfinite(Sc) & np.isfinite(Rc)
+    n_valid = mask.sum(axis=1)
+    valid_rows = np.where(n_valid == n_assets)[0]
+
+    if len(valid_rows) == 0:
+        return [], []
+
+    Sv = Sc[valid_rows]  # (n_valid_dates, n_assets)
+    Rv = Rc[valid_rows]
+
+    # One batch rankdata call replaces n_valid_dates individual calls.
+    Rx = stats.rankdata(Sv, axis=1)
+
+    # Map ranks to 1-based buckets in [1, n_quantiles].
+    buckets = np.ceil(Rx / n_assets * n_quantiles).astype(np.intp)
+    np.clip(buckets, 1, n_quantiles, out=buckets)
+
+    # Per-bucket sum and count using a broadcasting mask over all buckets at once.
+    b_range = np.arange(1, n_quantiles + 1, dtype=np.intp)  # (n_quantiles,)
+    b_mask = buckets[:, :, np.newaxis] == b_range  # (n_vd, n_assets, n_quantiles)
+    bucket_counts = b_mask.sum(axis=1)  # (n_vd, n_quantiles)
+    bucket_sums = (Rv[:, :, np.newaxis] * b_mask).sum(axis=1)  # (n_vd, n_quantiles)
+
+    with np.errstate(invalid="ignore"):
+        bucket_means = np.where(bucket_counts > 0, bucket_sums / bucket_counts, np.nan)
+
+    # Build spreads array (top-bucket mean − bottom-bucket mean).
+    top_ret = bucket_means[:, n_quantiles - 1]
+    bot_ret = bucket_means[:, 0]
+    both_finite = np.isfinite(top_ret) & np.isfinite(bot_ret)
+    spreads = (top_ret[both_finite] - bot_ret[both_finite]).tolist()
+
+    # Build the row list matching the per-date loop's dict structure.
+    # Tile dates and bucket indices for fast construction.
+    valid_dates = [common[i] for i in valid_rows]
+    rows: list[dict] = []
+    for i, d in enumerate(valid_dates):
+        for b in range(n_quantiles):
+            rows.append(
+                {
+                    "date": d,
+                    "bucket": b + 1,
+                    "mean_ret": float(bucket_means[i, b]),
+                    "n_assets": int(bucket_counts[i, b]),
+                }
+            )
+
+    return rows, spreads
 
 
 def quantile_spread(
@@ -95,44 +160,83 @@ def quantile_spread(
     r_map = {d: i for i, d in enumerate(r_dates)}
     common = sorted(set(s_map) & set(r_map))
 
-    rows: list[dict] = []
-    spreads: list[float] = []
+    if not common:
+        bucket_returns = pl.DataFrame(
+            {"date": [], "bucket": [], "mean_ret": [], "n_assets": []}
+        ).with_columns(
+            pl.col("bucket").cast(pl.Int32),
+            pl.col("mean_ret").cast(pl.Float64),
+            pl.col("n_assets").cast(pl.Int32),
+        )
+        return QuantileResult(
+            bucket_returns=bucket_returns,
+            mean_by_bucket=pl.DataFrame({"bucket": [], "mean_ret": []}).with_columns(
+                pl.col("bucket").cast(pl.Int32), pl.col("mean_ret").cast(pl.Float64)
+            ),
+            spread=float("nan"),
+            spread_ir=0.0,
+            monotonicity_score=float("nan"),
+            n_quantiles=n_quantiles,
+        )
 
-    for d in common:
-        x = S[s_map[d]]
-        y = R[r_map[d]]
-        mask = pairwise_mask(x, y)
-        if mask.sum() < min_obs:
-            continue
-        xm, ym = x[mask], y[mask]
+    s_idx = [s_map[d] for d in common]
+    r_idx = [r_map[d] for d in common]
+    Sc = S[s_idx]
+    Rc = R[r_idx]
 
-        # Assign quantile buckets via rank-based cut (equal-count)
-        ranks = stats.rankdata(xm, method="average")
-        # Map ranks to 1..n_quantiles buckets (lower rank → lower bucket)
-        buckets = np.ceil(ranks / len(ranks) * n_quantiles).astype(int)
-        buckets = np.clip(buckets, 1, n_quantiles)
+    n_dates, n_assets = Sc.shape
+    mask = np.isfinite(Sc) & np.isfinite(Rc)
+    n_valid = mask.sum(axis=1)
+    row_all_valid = n_valid == n_assets
+    row_all_nan = n_valid == 0
 
-        date_spreads: dict[int, list[float]] = {b: [] for b in range(1, n_quantiles + 1)}
-        for b, ret in zip(buckets, ym, strict=False):
-            date_spreads[b].append(ret)
+    rows: list[dict]
+    spreads: list[float]
 
-        dn = date_spreads[n_quantiles]
-        top_ret = float(np.mean(dn)) if dn else float("nan")
-        bot_ret = float(np.mean(date_spreads[1])) if date_spreads[1] else float("nan")
+    if (row_all_valid | row_all_nan).all():
+        # Fast path: row-homogeneous — each date is either fully valid or fully
+        # NaN.  Use a single batch rankdata call plus NumPy bin-sums instead of
+        # a per-date Python loop over rankdata + dict building.
+        rows, spreads = _quantile_spread_rows_vectorized(Sc, Rc, common, n_quantiles, min_obs)
+    else:
+        # Fallback: irregular NaN patterns — per-date loop.
+        rows = []
+        spreads = []
+        for ti in range(n_dates):
+            x = Sc[ti]
+            y = Rc[ti]
+            m = mask[ti]
+            if m.sum() < min_obs:
+                continue
+            xm, ym = x[m], y[m]
 
-        for b in range(1, n_quantiles + 1):
-            vals = date_spreads[b]
-            rows.append(
-                {
-                    "date": d,
-                    "bucket": b,
-                    "mean_ret": float(np.mean(vals)) if vals else float("nan"),
-                    "n_assets": len(vals),
-                }
-            )
+            # Assign quantile buckets via rank-based cut (equal-count)
+            ranks = stats.rankdata(xm, method="average")
+            # Map ranks to 1..n_quantiles buckets (lower rank → lower bucket)
+            buckets = np.ceil(ranks / len(ranks) * n_quantiles).astype(int)
+            buckets = np.clip(buckets, 1, n_quantiles)
 
-        if np.isfinite(top_ret) and np.isfinite(bot_ret):
-            spreads.append(top_ret - bot_ret)
+            date_spreads: dict[int, list[float]] = {b: [] for b in range(1, n_quantiles + 1)}
+            for b, ret in zip(buckets, ym, strict=False):
+                date_spreads[b].append(ret)
+
+            dn = date_spreads[n_quantiles]
+            top_ret = float(np.mean(dn)) if dn else float("nan")
+            bot_ret = float(np.mean(date_spreads[1])) if date_spreads[1] else float("nan")
+
+            for b in range(1, n_quantiles + 1):
+                vals = date_spreads[b]
+                rows.append(
+                    {
+                        "date": common[ti],
+                        "bucket": b,
+                        "mean_ret": float(np.mean(vals)) if vals else float("nan"),
+                        "n_assets": len(vals),
+                    }
+                )
+
+            if np.isfinite(top_ret) and np.isfinite(bot_ret):
+                spreads.append(top_ret - bot_ret)
 
     if rows:
         bucket_returns = pl.DataFrame(rows).with_columns(pl.col("bucket").cast(pl.Int32))
