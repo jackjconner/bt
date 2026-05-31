@@ -12,13 +12,35 @@ component profiling harness + integration suite:
   module. `main.py` runs it after the pipeline.
 - `tests/integration/` — per-component contract tests + full e2e + harness
   smoke; root `conftest.py` enables nested-test imports.
-458 tests pass, ruff clean. `uv run main.py` runs scaling exp → pipeline →
+1284 tests pass, ruff clean. `uv run main.py` runs scaling exp → pipeline →
 harness end-to-end.
+
+**Improvement loop:** through round 007. Rounds 001–006 were perf/explore/
+consolidate; **round 007 was the first `feature` round** — 7 components in
+parallel, one additive flag-off/API-only capability each (signals pair-corr #49,
+profiling r²-gating #50, portfolio risk-decomp #51, models fold-diagnostics #52,
+backtest short-gating #53, etl quality-flags #54, analysis drawdown-recovery #55),
+all merged, golden byte-identical (flags ship off). Ideation/dedup found 7 of 9
+seeded `FEATURE_BACKLOG.md` rows were already built — the dedup step is load-bearing.
 
 ## Active task
 None — all goal tasks complete. Two benign pytest warnings remain (ElasticNet
 l1_ratio=0 convergence; spearmanr ConstantInput) from intentional edge-case
 tests in models/.
+
+**Open loop follow-ups (round 007):**
+- `scripts/gate eval` resolves the golden at the *worktree* root, but
+  `.oversight/golden.json` is gitignored and absent in fresh worktrees — all 7
+  round-007 workers had to copy it in from the primary. Fix: have `gate eval`
+  resolve the golden from the common git dir (`git rev-parse --git-common-dir`'s
+  parent) so workers don't hand-provision it. Small, worth doing before the next
+  multi-worker round. (Not done — flagged, awaiting go.)
+- `consolidate-check` for `gate` (branch-vs-main PipelineSummary diff) still open
+  from round 006.
+- `FEATURE_BACKLOG.md` still-queued: F-006 (portfolio EWMA factor-cov), F-008
+  (backtest order types). Several flag-off capabilities now ship dormant
+  (backtest short-gating; etl quality-flags; models fold-diagnostics) — a future
+  round can flip one on deliberately and move the golden with justification.
 
 ## Follow-ups if resumed
 - Calendar vs session axis: raw `generate_returns` still uses calendar days;
