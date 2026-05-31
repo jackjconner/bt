@@ -54,6 +54,19 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+# Reclaim the port if a previous serve left an http.server bound to it. serve is
+# idempotent — re-running it (e.g. via `mise run serve`) must not fail on
+# EADDRINUSE just because an earlier instance is still holding 127.0.0.1:$PORT.
+_port_pid="$(ss -ltnpH 2>/dev/null | grep ":${PORT} " | grep -o 'pid=[0-9]*' | head -1 | cut -d= -f2 || true)"
+if [ -n "${_port_pid:-}" ]; then
+  echo "reports: port ${PORT} already bound (pid ${_port_pid}) — reclaiming it"
+  kill "${_port_pid}" 2>/dev/null || true
+  for _ in 1 2 3 4 5; do
+    ss -ltnH 2>/dev/null | grep -q ":${PORT} " || break
+    sleep 0.3
+  done
+fi
+
 # Serve the static site from _site/ on localhost.
 python3 -m http.server "$PORT" \
   --directory "${REPORTS_DIR}/_site" \
