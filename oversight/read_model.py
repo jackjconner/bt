@@ -239,7 +239,7 @@ def load(root: Path, history_dir: Path) -> DeckState:
     cumulative_landed = sum(1 for e in improvements if e.verdict == "accepted")
     trends = _trends(history_dir)
 
-    awaiting = state is None and not lanes and not improvements
+    awaiting = state is None and not lanes and not improvements and not trends
 
     proposal = state.proposal if state is not None else None
     golden = state.golden if state is not None else None

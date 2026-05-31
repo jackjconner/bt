@@ -139,6 +139,9 @@ def test_history_feeds_trends(tmp_path: Path) -> None:
     history_dir = tmp_path / "history"
     _seed_history(history_dir)
     deck = load(tmp_path, history_dir)
+    # recorded history must take the deck out of the "awaiting" empty-state,
+    # otherwise the trend panels never render (the deck short-circuits).
+    assert deck.awaiting is False
     comps = {row.component for row in deck.trends}
     assert "portfolio" in comps
     assert "e2e" in comps
