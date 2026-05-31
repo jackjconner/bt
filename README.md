@@ -75,18 +75,30 @@ uv run ty check                                             # strict types, erro
 The repo ships two skills for iteratively improving a component *behind its
 public API*, split by role:
 
-- `.claude/skills/improvement-orchestrator/` — the **conductor**. Proposes a
-  target (often a profiling-flagged hotspot), fans out per-component workers in
-  isolated git worktrees, adjudicates the gates, serial-merges with post-merge
-  re-validation, ratchets the baseline, and dispatches a docs agent afterward.
+- `.claude/skills/improvement-orchestrator/` — the **conductor**. Picks a round
+  **type** + target, fans out workers in isolated git worktrees, adjudicates the
+  (type-aware) gates, serial-merges with post-merge re-validation, ratchets the
+  baseline, and dispatches a docs agent afterward.
 - `.claude/skills/component-improvement-loop/` — the **worker** a dispatched
   sub-agent follows: improve one component in your worktree, keep the change
   additive, and land a reviewed PR (`pr-writeup.md`).
 
-Every PR is gated on **lint · types · correctness · profiling · evaluation**.
-Two ledgers keep the loop honest:
+A round is one of **four types**, each with its own acceptance bar:
 
-- `IMPROVEMENTS.md` — append-only round log (the loop's memory + dedup source)
+| type | does | evaluation bar |
+|---|---|---|
+| **exploit** | minimal-diff perf/accuracy win on a hotspot | golden holds, or justified move |
+| **refactor** | split large/tangled functions, add tests, no behavior change | golden **byte-identical** (`--tolerance 0`) |
+| **feature** | add a new capability additively, behind a flag | existing fields hold, new ones allowed (`--allow-new-fields`) |
+| **explore** | a bold rewrite via a cadenced **K-way tournament** (judge keeps the best) | golden holds, or justified |
+
+Every PR is gated on **lint · types · correctness · profiling · evaluation** (the
+profiling + evaluation bars vary by type). Ledgers keep the loop honest:
+
+- `IMPROVEMENTS.md` — append-only round log (the loop's memory + dedup + explore-cadence source)
+- `VISION.md` — the north-star + scoring rubric that ranks feature candidates
+- `FEATURE_BACKLOG.md` — prioritized capability queue (ideation appends; Jack reprioritizes)
+- `SPIKES.md` — what discarded explore attempts taught us (the exploration memory)
 - `API_REQUESTS.md` — inter-agent data requests; APIs only ever grow additively
 
 ## Layout
