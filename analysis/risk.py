@@ -12,11 +12,13 @@ must also be fractional daily (matching `risk_free_rate.daily_rate`).
 
 from __future__ import annotations
 
+import datetime as dt
 import math
 
 import numpy as np
 import polars as pl
 
+from etl.schema import DataTypeLike
 from etl.source import to_float
 
 TRADING_DAYS = 252
@@ -206,3 +208,110 @@ def best_day(returns: pl.DataFrame) -> float:
 def worst_day(returns: pl.DataFrame) -> float:
     """Smallest (most negative) single-day return (fractional)."""
     return to_float(returns["return_1d"].min())
+
+
+# ---------------------------------------------------------------------------
+# Drawdown duration & recovery analytics
+# ---------------------------------------------------------------------------
+
+_DRAWDOWN_RECOVERY_SCHEMA: dict[str, DataTypeLike] = {
+    "peak_date": pl.Date,
+    "trough_date": pl.Date,
+    "recovery_date": pl.Date,
+    "depth": pl.Float64,
+    "drawdown_days": pl.Int64,
+    "recovery_days": pl.Int64,
+    "peak_to_recovery_days": pl.Int64,
+}
+
+
+def drawdown_recovery(nav: pl.DataFrame) -> pl.DataFrame:
+    """Per-event drawdown duration & recovery table from the NAV/equity path.
+
+    A *drawdown event* runs from a peak (a session at a running high, so
+    drawdown == 0) through the subsequent trough (the most negative point) to
+    the recovery (the first session that regains the prior peak, i.e. drawdown
+    returns to 0). Events are isolated off the same drawdown series the rest of
+    ``analysis`` reports — ``nav / nav.cum_max() - 1`` — so the deepest event's
+    ``depth`` equals :func:`analysis.metrics.max_drawdown` exactly.
+
+    One row per event, in chronological order, with columns:
+
+    - ``peak_date`` — date of the running high the event drops from.
+    - ``trough_date`` — date of the most negative drawdown within the event.
+    - ``recovery_date`` — first date the event regains the prior peak;
+      ``None`` for an unrecovered tail drawdown still open at series end.
+    - ``depth`` — drawdown at the trough (negative fraction, e.g. ``-0.20``).
+    - ``drawdown_days`` — sessions from peak to trough (peak->trough).
+    - ``recovery_days`` — sessions from trough to recovery; ``None`` if
+      unrecovered.
+    - ``peak_to_recovery_days`` — sessions from peak to recovery (the full
+      underwater span); ``None`` if unrecovered.
+
+    Durations are counted in *sessions* (index steps), matching the
+    session-axis convention the engine runs on. A monotonically rising or flat
+    NAV yields an empty (but correctly typed) frame.
+    """
+    if nav.height == 0:
+        return pl.DataFrame(schema=_DRAWDOWN_RECOVERY_SCHEMA)
+
+    dd = nav.select(
+        pl.col("date"),
+        (pl.col("nav") / pl.col("nav").cum_max() - 1.0).alias("drawdown"),
+    )
+    dates = dd["date"].to_list()
+    drawdown = dd["drawdown"].to_numpy()
+
+    peak_dates: list[dt.date] = []
+    trough_dates: list[dt.date] = []
+    recovery_dates: list[dt.date | None] = []
+    depths: list[float] = []
+    drawdown_days: list[int] = []
+    recovery_days: list[int | None] = []
+    peak_to_recovery_days: list[int | None] = []
+
+    n = len(drawdown)
+    i = 0
+    while i < n:
+        if drawdown[i] >= 0.0:
+            i += 1
+            continue
+        # Event opened at i; the peak is the immediately preceding session,
+        # which by construction sat at a running high (drawdown == 0).
+        peak_idx = i - 1
+        trough_idx = i
+        j = i
+        while j < n and drawdown[j] < 0.0:
+            if drawdown[j] < drawdown[trough_idx]:
+                trough_idx = j
+            j += 1
+        # j is either past the end (unrecovered) or the first recovered session.
+        recovered = j < n
+        recovery_idx = j if recovered else None
+
+        peak_dates.append(dates[peak_idx])
+        trough_dates.append(dates[trough_idx])
+        depths.append(float(drawdown[trough_idx]))
+        drawdown_days.append(trough_idx - peak_idx)
+        if recovery_idx is not None:
+            recovery_dates.append(dates[recovery_idx])
+            recovery_days.append(recovery_idx - trough_idx)
+            peak_to_recovery_days.append(recovery_idx - peak_idx)
+        else:
+            recovery_dates.append(None)
+            recovery_days.append(None)
+            peak_to_recovery_days.append(None)
+        i = j
+
+    return pl.DataFrame(
+        {
+            "peak_date": peak_dates,
+            "trough_date": trough_dates,
+            "recovery_date": recovery_dates,
+            "depth": depths,
+            "drawdown_days": drawdown_days,
+            "recovery_days": recovery_days,
+            "peak_to_recovery_days": peak_to_recovery_days,
+        },
+        schema=_DRAWDOWN_RECOVERY_SCHEMA,
+    )
