@@ -1158,6 +1158,54 @@ def gen_cpu_profile_frames(spec: GenSpec) -> pl.DataFrame:
 
 
 # --------------------------------------------------------------------------- #
+# I. market-regime data
+# --------------------------------------------------------------------------- #
+
+#: Number of latent market regimes.  Low / Mid / High volatility.
+N_REGIMES: int = 3
+
+REGIME_STATES = Schema(
+    "regime_states",
+    (
+        col("date", pl.Date),
+        col("regime_state", pl.Int64),
+    ),
+    keys=("date",),
+)
+
+
+def gen_regime_states(spec: GenSpec) -> pl.DataFrame:
+    """Per-date latent regime label from a seeded Markov chain.
+
+    Generates a 3-state (0 = low-vol, 1 = mid-vol, 2 = high-vol) discrete
+    Markov process.  The transition matrix is designed so each regime is
+    moderately persistent (p_stay ≈ 0.85) with rare jumps, giving cleanly
+    separable runs for the detector test to recover.
+
+    This dataset is INDEPENDENT of the existing ``returns`` / ``prices``
+    generators so it does not alter any golden outputs.  The detector
+    ``signals.regime.detect_regimes`` infers regime labels from realised
+    volatility and can be compared against these labels in tests.
+    """
+    rng = _rng(spec, 27)
+    nd = spec.n_dates
+
+    # Transition matrix: diagonal = persistence, off-diagonal = spread evenly.
+    n_states = N_REGIMES
+    p_stay = 0.85
+    p_jump = (1.0 - p_stay) / (n_states - 1)
+    T = np.full((n_states, n_states), p_jump)
+    np.fill_diagonal(T, p_stay)
+
+    states = np.empty(nd, dtype=np.int64)
+    states[0] = rng.integers(0, n_states)
+    for t in range(1, nd):
+        states[t] = rng.choice(n_states, p=T[states[t - 1]])
+
+    return pl.DataFrame({"date": _dates(spec), "regime_state": states})
+
+
+# --------------------------------------------------------------------------- #
 # registry
 # --------------------------------------------------------------------------- #
 
@@ -1211,6 +1259,7 @@ REGISTRY: dict[str, Dataset] = {
         _ds("regression_thresholds", REGRESSION_THRESHOLDS, gen_regression_thresholds),
         _ds("scaling_fits", SCALING_FITS, gen_scaling_fits),
         _ds("cpu_profile_frames", CPU_PROFILE_FRAMES, gen_cpu_profile_frames),
+        _ds("regime_states", REGIME_STATES, gen_regime_states),
     ]
 }
 
