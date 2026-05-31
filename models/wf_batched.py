@@ -456,4 +456,5 @@ def walk_forward_cv_batched(panel: PanelArrays, splitter, model_factory, config)
         all_dates_list,
         all_ids_list,
         panel_rows,
+        config.fold_ic_dispersion_enabled,
     )

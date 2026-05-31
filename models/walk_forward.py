@@ -31,7 +31,7 @@ Public API
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, cast
 
 import numpy as np
@@ -154,6 +154,16 @@ class WalkForwardConfig:
         Forward per-sample weights to ``model.fit`` if the model supports it.
     inner_val_frac:
         Fraction of each train fold held out for inner alpha selection.
+    fold_ic_dispersion_enabled:
+        Additive diagnostics flag (default ``False``).  When ``True``,
+        ``walk_forward_cv`` populates two per-fold fields on each ``FoldResult``
+        (``fold_ic_std`` — the within-fold dispersion of the per-date IC, and
+        ``fold_hit_rate`` — the fraction of test dates with IC > 0) and collects
+        a fold-level ``fold_diagnostics`` list on the ``WFResult``.  Both are
+        derived from the per-date ``ic_values`` already computed per fold, so the
+        flag adds no model work and does not touch ``mean_ic`` / ``mean_r2``.
+        When ``False`` (the default) no new fields are populated and the result
+        is byte-identical to the pre-flag behaviour.
     engine:
         Which CV engine to run (additive; default ``"auto"``).
 
@@ -178,6 +188,7 @@ class WalkForwardConfig:
     scale_features: bool = True
     use_sample_weights: bool = True
     inner_val_frac: float = 0.2
+    fold_ic_dispersion_enabled: bool = False
     engine: str = "auto"
 
 
@@ -201,6 +212,15 @@ class FoldResult:
         Number of training samples.
     n_test:
         Number of test samples.
+    fold_ic_std:
+        Within-fold dispersion (population std, ddof=0) of the per-date
+        ``ic_values``.  Additive diagnostic, populated only when
+        ``WalkForwardConfig.fold_ic_dispersion_enabled`` is True; ``None``
+        otherwise (the default), so existing call sites are unaffected.
+    fold_hit_rate:
+        Fraction of test dates with IC > 0 within this fold.  Additive
+        diagnostic, populated only when ``fold_ic_dispersion_enabled`` is True;
+        ``None`` otherwise.
     """
 
     fit_result: ModelResult
@@ -210,6 +230,11 @@ class FoldResult:
     chosen_alpha: float
     n_train: int
     n_test: int
+    # NEW (additive): per-fold IC dispersion diagnostics, gated by
+    # WalkForwardConfig.fold_ic_dispersion_enabled. None when the flag is off
+    # (default) so old call-sites and the golden are unaffected.
+    fold_ic_std: float | None = None
+    fold_hit_rate: float | None = None
 
 
 @dataclass(frozen=True)
@@ -244,6 +269,13 @@ class WFResult:
         non-overlapping by construction (each date appears in at most one fold).
         ``None`` when no folds completed.  This field is additive — existing call
         sites that do not use it are unaffected.
+    fold_diagnostics:
+        Fold-level IC dispersion + hit-rate diagnostics, one dict per fold with
+        keys ``fold``, ``fold_ic_std``, ``fold_hit_rate``, ``n_test_dates``.
+        Additive — populated only when
+        ``WalkForwardConfig.fold_ic_dispersion_enabled`` is True; ``None``
+        otherwise (the default), so the result is byte-identical with the flag
+        off.
     """
 
     fold_results: list[FoldResult]
@@ -259,6 +291,9 @@ class WFResult:
     # NEW (additive): per-fold OOS predictions keyed by (date, id, prediction, fold).
     # None when no folds completed. Old call-sites are unaffected (default=None).
     predictions_panel: pl.DataFrame | None = None
+    # NEW (additive): per-fold IC dispersion + hit-rate diagnostics, gated by
+    # WalkForwardConfig.fold_ic_dispersion_enabled. None when the flag is off.
+    fold_diagnostics: list[dict[str, float]] | None = None
 
 
 # --------------------------------------------------------------------------- #
@@ -362,6 +397,49 @@ def _build_fold_panel_df(
     )
 
 
+def _fold_ic_diagnostics(ic_values: np.ndarray) -> tuple[float, float]:
+    """Per-fold IC dispersion + hit rate from the fold's per-date ``ic_values``.
+
+    Returns ``(fold_ic_std, fold_hit_rate)``:
+
+    * ``fold_ic_std`` — population std (ddof=0) of the per-date IC; 0.0 for an
+      empty fold.
+    * ``fold_hit_rate`` — fraction of dates with IC > 0; 0.0 for an empty fold.
+
+    Both are derived from the existing per-date IC (no IC recomputation), are
+    finite by construction, and satisfy ``fold_ic_std ≥ 0`` and
+    ``0 ≤ fold_hit_rate ≤ 1``.
+    """
+    n = len(ic_values)
+    if n == 0:
+        return 0.0, 0.0
+    fold_ic_std = float(ic_values.std())
+    fold_hit_rate = float(np.count_nonzero(ic_values > 0.0) / n)
+    return fold_ic_std, fold_hit_rate
+
+
+def _attach_fold_diagnostics(
+    fold_results: list[FoldResult],
+) -> tuple[list[FoldResult], list[dict[str, float]]]:
+    """Populate ``fold_ic_std`` / ``fold_hit_rate`` on each fold and build the
+    fold-level ``fold_diagnostics`` list.  Pure function of the existing
+    per-date ``ic_values``; only called when the diagnostics flag is on."""
+    enriched: list[FoldResult] = []
+    diagnostics: list[dict[str, float]] = []
+    for i, fr in enumerate(fold_results):
+        fold_ic_std, fold_hit_rate = _fold_ic_diagnostics(fr.ic_values)
+        enriched.append(replace(fr, fold_ic_std=fold_ic_std, fold_hit_rate=fold_hit_rate))
+        diagnostics.append(
+            {
+                "fold": float(i),
+                "fold_ic_std": fold_ic_std,
+                "fold_hit_rate": fold_hit_rate,
+                "n_test_dates": float(len(fr.ic_values)),
+            }
+        )
+    return enriched, diagnostics
+
+
 def _assemble_wf_result(
     fold_results: list[FoldResult],
     all_preds_list: list[np.ndarray],
@@ -370,12 +448,22 @@ def _assemble_wf_result(
     all_dates_list: list[np.ndarray],
     all_ids_list: list[np.ndarray],
     panel_rows: list[pl.DataFrame],
+    fold_ic_dispersion_enabled: bool = False,
 ) -> WFResult:
     """Concatenate per-fold accumulators into the final ``WFResult``.
 
     Handles the empty-fold edge case for all array fields and for
     ``predictions_panel`` (returns ``None`` when no folds completed).
+
+    When ``fold_ic_dispersion_enabled`` is True, per-fold IC dispersion + hit
+    rate are computed from each fold's existing ``ic_values`` and attached to the
+    ``FoldResult``s and ``WFResult.fold_diagnostics``.  When False (default) the
+    folds and result are untouched (``fold_diagnostics`` is ``None``), so the
+    aggregate ``mean_ic`` / ``mean_r2`` and every other field are byte-identical.
     """
+    fold_diagnostics: list[dict[str, float]] | None = None
+    if fold_ic_dispersion_enabled:
+        fold_results, fold_diagnostics = _attach_fold_diagnostics(fold_results)
     all_preds = np.concatenate(all_preds_list) if all_preds_list else np.array([])
     all_true = np.concatenate(all_true_list) if all_true_list else np.array([])
     all_groups = (
@@ -406,6 +494,7 @@ def _assemble_wf_result(
         all_dates=all_dates,
         all_ids=all_ids,
         predictions_panel=predictions_panel,
+        fold_diagnostics=fold_diagnostics,
     )
 
 
@@ -548,4 +637,5 @@ def walk_forward_cv(
         all_dates_list,
         all_ids_list,
         panel_rows,
+        config.fold_ic_dispersion_enabled,
     )
