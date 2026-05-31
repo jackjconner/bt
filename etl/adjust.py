@@ -47,68 +47,6 @@ class AdjustmentResult:
     adj_log: pl.DataFrame  # ex_date, id, action_type, factor
 
 
-def _split_factor(action_row: dict) -> float | None:
-    """Return the back-adjustment factor for a split action, or None to skip."""
-    ratio = action_row.get("split_ratio")
-    if ratio is None or np.isnan(ratio) or ratio <= 0:
-        return None
-    return 1.0 / ratio
-
-
-def _dividend_factor(action_row: dict, pre_close: float) -> float | None:
-    """Return the back-adjustment factor for a cash/special dividend, or None to skip."""
-    cash = action_row.get("cash_amount")
-    if cash is None or np.isnan(cash) or cash <= 0 or pre_close <= 0:
-        return None
-    return pre_close / (pre_close + cash)
-
-
-def _apply_factor(factor: np.ndarray, f: float, last_prior: int) -> None:
-    """Multiply ``factor[0:last_prior+1]`` by ``f`` in-place."""
-    for i in range(last_prior + 1):
-        factor[i] *= f
-
-
-def _adjust_single_asset(
-    pdf: pl.DataFrame,
-    actions: pl.DataFrame | None,
-    close_col: str,
-) -> tuple[pl.DataFrame, list[dict]]:
-    """Compute adjusted close for one asset; return extended frame and log rows."""
-    dates = pdf["date"].to_list()
-    closes = pdf[close_col].to_numpy().copy()
-    factor = np.ones(len(dates))
-    log_rows: list[dict] = []
-
-    if actions is not None and not actions.is_empty():
-        for action_row in actions.iter_rows(named=True):
-            ex_date = action_row["ex_date"]
-            atype = str(action_row["action_type"])
-            prior_indices = [i for i, d in enumerate(dates) if d < ex_date]
-            if not prior_indices:
-                continue
-            last_prior = prior_indices[-1]
-            pre_close = closes[last_prior]
-
-            if atype == "split":
-                f = _split_factor(action_row)
-            elif atype in ("cash_dividend", "special_dividend"):
-                f = _dividend_factor(action_row, pre_close)
-            else:
-                f = None
-
-            if f is None:
-                continue
-
-            _apply_factor(factor, f, last_prior)
-            log_rows.append(
-                {"ex_date": ex_date, "id": action_row["id"], "action_type": atype, "factor": f}
-            )
-
-    adj_close = closes * factor
-    return pdf.with_columns(pl.Series("adj_close", adj_close)), log_rows
-
-
 def _build_adj_log(log_rows: list[dict]) -> pl.DataFrame:
     """Assemble the audit log DataFrame from raw row dicts."""
     if log_rows:
@@ -161,9 +99,8 @@ def adjust_prices(
     no ``pl.concat`` of N per-asset blocks.  Per-asset action factors are found
     with one ``join_asof`` (raw pre-ex close), and the back-adjustment factor at
     every ``(id, date)`` cell is a single segmented reverse-cumulative-product
-    over the sorted long frame.  This is numerically identical to the legacy
-    per-asset loop (``_adjust_single_asset``, retained below) but scales with
-    the *number of actions* rather than the *number of assets*.
+    over the sorted long frame.  This scales with the *number of actions* rather
+    than the *number of assets*.
     """
     return _adjust_vectorized(prices, corporate_actions, close_col)
 
@@ -184,8 +121,8 @@ def _adjust_vectorized(
     even when many splits multiply), exponentiate, and scale the close.  An
     action whose ``ex_date`` falls after an asset's last session applies to the
     whole segment (a per-segment tail factor); one whose ``ex_date`` is at or
-    before the first session has no prior row and is dropped — matching the
-    legacy ``prior_indices`` guard.
+    before the first session has no prior row and is dropped (no history to
+    back-adjust).
     """
     ca = corporate_actions.filter(
         pl.col("action_type").cast(pl.String).is_in(["split", "cash_dividend", "special_dividend"])
@@ -284,8 +221,7 @@ def _adjust_vectorized(
     )
 
     # Audit log: one row per applied factor.  An action with no prior session
-    # (ex_date at/before the first row) changes nothing and is omitted, matching
-    # the legacy per-asset path's ``prior_indices`` guard.
+    # (ex_date at/before the first row) changes nothing and is omitted.
     applied = is_tail | has_prior
     adj_log = (
         matched.select("ex_date", "id", "action_type", "factor")
