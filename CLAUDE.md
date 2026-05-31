@@ -10,6 +10,33 @@ uv run python -c "..."         # one-off script in the venv
 uv add <package>               # add dependency (updates pyproject.toml + uv.lock)
 ```
 
+## Profiling
+
+Scalar stage metrics (timing, memory, scaling, regression) live in `profiling/`.
+For **within-stage flame graphs**, use `profiling/flamegraph.py` — both capture
+functions are in-process and unprivileged (no ptrace/root), so they run inside
+an agent loop:
+
+```python
+from profiling import capture_cpu, capture_memory, write_artifacts, prune_profiles
+
+# CPU: pyinstrument → speedscope flame graph + agent-readable .calltree.txt
+result, arts = capture_cpu("build_panel", lambda: build_panel(...),
+                           profiles_dir=pdir, run_id=rid, param_point_id=0, git_sha=sha)
+# Memory: memray → .bin + agent-readable .summary.txt (sees native Polars/NumPy allocs)
+result, marts = capture_memory("build_panel", lambda: build_panel(...), profiles_dir=pdir, ...)
+
+write_artifacts(pdir, arts + marts)   # → profile_artifacts.parquet index, keyed like stage_measurements
+prune_profiles(pdir, keep_last_n=5)   # keeps latest N runs + any flagged on_regression=True
+```
+
+- Blobs land in a sibling `profiles/<run_id>/` tree; query `profile_artifacts.parquet`
+  (via `read_artifacts`) to find the path for a given run/stage, then read the
+  `.calltree.txt` / `.summary.txt` directly.
+- pyinstrument attributes native (Rust/C) CPU time to the Python call site, not
+  the frames inside it. Seeing into Polars' Rust needs py-spy `--native` (ptrace,
+  intentionally not used); memray already gives native frames for memory.
+
 ## Rules
 
 - do not make decisions on architecture, design, or workaround without explicitly consulting me
