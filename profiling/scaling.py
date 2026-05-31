@@ -131,6 +131,24 @@ def fit_scaling(
     return results
 
 
+def stage_metric_r_squared(fits: list[ScalingFit]) -> dict[tuple[str, str], float]:
+    """Best (max) fit r² per (stage, metric), pooling across scaling dims.
+
+    A (stage, metric) is fit independently against each scaling dim; the highest
+    r² across those dims is the strongest evidence that the metric scales
+    predictably for that stage, so it is the natural confidence score. Regression
+    gating uses this to decide whether a stage's measurements are trustworthy
+    enough to raise an alarm on (see ``regression.check_regressions``).
+    """
+    best: dict[tuple[str, str], float] = {}
+    for f in fits:
+        key = (f.stage, f.metric)
+        prev = best.get(key)
+        if prev is None or f.r_squared > prev:
+            best[key] = f.r_squared
+    return best
+
+
 def fits_to_dataframe(fits: list[ScalingFit]) -> pl.DataFrame:
     """Convert a list of ``ScalingFit`` to a Polars DataFrame.
 

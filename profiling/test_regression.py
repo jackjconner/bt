@@ -5,6 +5,20 @@ from __future__ import annotations
 import polars as pl
 
 from profiling.regression import check_regressions
+from profiling.scaling import ScalingFit
+
+
+def _fit(stage: str, metric: str, r_squared: float, dim: str = "n_assets") -> ScalingFit:
+    return ScalingFit(
+        run_id="test",
+        stage=stage,
+        metric=metric,
+        scaling_dim=dim,
+        log_log_slope=1.0,
+        intercept=0.0,
+        r_squared=r_squared,
+        n_points=4,
+    )
 
 
 def _make_baselines(
@@ -107,6 +121,70 @@ def test_missing_stage_in_baselines_skipped() -> None:
     )
     report = check_regressions(current, _make_baselines(), _make_thresholds())
     assert report.passed
+
+
+def test_min_r_squared_none_is_byte_identical() -> None:
+    """Passing scaling_fits but min_r_squared=None leaves verdicts unchanged."""
+    args = (
+        _make_current(elapsed_s=1.30),
+        _make_baselines(elapsed_p50=1.00),
+        _make_thresholds(max_pct=0.20, max_abs=999.0),
+    )
+    base = check_regressions(*args)
+    with_fits = check_regressions(
+        *args,
+        scaling_fits=[_fit("etl.batch", "elapsed_s", 0.10)],
+        min_r_squared=None,
+    )
+    assert with_fits.passed == base.passed
+    assert with_fits.violations == base.violations
+    assert with_fits.scaling_fit_confidence_ok is None
+    assert with_fits.excluded_low_confidence == ()
+
+
+def test_low_r_squared_excludes_noisy_regression() -> None:
+    """A genuine threshold breach is suppressed when its fit r² is below the floor."""
+    report = check_regressions(
+        _make_current(elapsed_s=1.30),  # 30% over baseline — would normally flag
+        _make_baselines(elapsed_p50=1.00),
+        _make_thresholds(max_pct=0.20, max_abs=999.0),
+        scaling_fits=[_fit("etl.batch", "elapsed_s", 0.30)],  # noisy fit
+        min_r_squared=0.90,
+    )
+    assert report.passed
+    assert len(report.violations) == 0
+    assert report.scaling_fit_confidence_ok is False
+    assert ("etl.batch", "elapsed_s") in report.excluded_low_confidence
+
+
+def test_high_r_squared_still_flags_regression() -> None:
+    """A real regression on a well-fit (high r²) stage is still reported."""
+    report = check_regressions(
+        _make_current(elapsed_s=1.30),
+        _make_baselines(elapsed_p50=1.00),
+        _make_thresholds(max_pct=0.20, max_abs=999.0),
+        scaling_fits=[_fit("etl.batch", "elapsed_s", 0.995)],
+        min_r_squared=0.90,
+    )
+    assert not report.passed
+    assert any(v.metric == "elapsed_s" for v in report.violations)
+    assert report.scaling_fit_confidence_ok is True
+    assert report.excluded_low_confidence == ()
+
+
+def test_missing_fit_with_gating_does_not_exclude() -> None:
+    """When gating is on but a (stage, metric) has no fit, it is checked as usual."""
+    report = check_regressions(
+        _make_current(elapsed_s=1.30),
+        _make_baselines(elapsed_p50=1.00),
+        _make_thresholds(max_pct=0.20, max_abs=999.0),
+        scaling_fits=[_fit("other.stage", "elapsed_s", 0.10)],
+        min_r_squared=0.90,
+    )
+    # No fit for etl.batch/elapsed_s → cannot judge noise → keep the violation.
+    assert not report.passed
+    assert any(v.metric == "elapsed_s" for v in report.violations)
+    assert report.excluded_low_confidence == ()
 
 
 def test_multiple_metric_violations() -> None:

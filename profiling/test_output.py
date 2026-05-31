@@ -107,6 +107,21 @@ def test_write_json_with_regression_report(tmp_path: Path) -> None:
     assert len(doc["regression"]["violations"]) == 1
 
 
+def test_write_json_surfaces_confidence_audit(tmp_path: Path) -> None:
+    env = capture_environment("run-json-005")
+    report = RegressionReport(
+        passed=True,
+        violations=(),
+        scaling_fit_confidence_ok=False,
+        excluded_low_confidence=(("etl.batch", "elapsed_s"),),
+    )
+    out = tmp_path / "report.json"
+    write_json(out, env, [_make_trial_result()], regression_report=report)
+    doc = json.loads(out.read_text())
+    assert doc["regression"]["scaling_fit_confidence_ok"] is False
+    assert doc["regression"]["excluded_low_confidence"] == [["etl.batch", "elapsed_s"]]
+
+
 def test_write_measurements_parquet(tmp_path: Path) -> None:
     params = {"n_assets": 100, "n_dates": 252, "n_features": 20, "n_factors": 5}
     out = tmp_path / "meas.parquet"

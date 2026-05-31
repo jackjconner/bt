@@ -18,9 +18,11 @@ slow trial can be a fluke, but the median cannot.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import polars as pl
+
+from .scaling import ScalingFit, stage_metric_r_squared
 
 
 @dataclass(frozen=True)
@@ -38,10 +40,22 @@ class RegressionViolation:
 
 @dataclass(frozen=True)
 class RegressionReport:
-    """Outcome of a full regression check for one param-point + run combo."""
+    """Outcome of a full regression check for one param-point + run combo.
+
+    ``scaling_fit_confidence_ok`` / ``excluded_low_confidence`` are populated
+    only when ``check_regressions`` is called with ``min_r_squared`` set; when
+    confidence gating is off they stay ``None`` / ``()`` so the report is
+    identical to a pre-gating run.
+    """
 
     passed: bool
     violations: tuple[RegressionViolation, ...]
+    # None  → confidence gating was not requested (min_r_squared is None).
+    # True  → gating on, every checked (stage, metric) cleared the r² floor.
+    # False → gating on, at least one (stage, metric) was excluded as too noisy.
+    scaling_fit_confidence_ok: bool | None = None
+    # (stage, metric) pairs skipped because their scaling-fit r² < min_r_squared.
+    excluded_low_confidence: tuple[tuple[str, str], ...] = field(default_factory=tuple)
 
 
 def _check_metric(
@@ -80,6 +94,8 @@ def check_regressions(
     current_metrics: pl.DataFrame,
     baselines: pl.DataFrame,
     thresholds: pl.DataFrame,
+    scaling_fits: list[ScalingFit] | None = None,
+    min_r_squared: float | None = None,
 ) -> RegressionReport:
     """Compare ``current_metrics`` against ``baselines`` using ``thresholds``.
 
@@ -94,15 +110,29 @@ def check_regressions(
         thresholds: Rows from ``regression_thresholds`` with columns
             ``stage``, ``metric``, ``max_pct_increase``, ``max_abs_increase``,
             ``min_samples``.
+        scaling_fits: Optional scaling fits (from ``fit_scaling``) used only when
+            ``min_r_squared`` is set, to look up each (stage, metric)'s fit r².
+        min_r_squared: Optional confidence floor in [0, 1].  When set, any
+            (stage, metric) whose best scaling-fit r² is below this threshold is
+            treated as too noisy to trust and is *excluded* from the regression
+            verdict — guarding against false alarms on noisy grids.  When
+            ``None`` (default) no gating happens and the result is byte-identical
+            to a call without these arguments.  A (stage, metric) with no fit is
+            never excluded (absence of a fit is not evidence of noise).
 
     Returns:
-        ``RegressionReport`` with ``passed=True`` iff no violations found.
+        ``RegressionReport`` with ``passed=True`` iff no violations found.  When
+        ``min_r_squared`` is set, ``scaling_fit_confidence_ok`` /
+        ``excluded_low_confidence`` record which pairs were skipped for low
+        confidence.
 
     The three measured metrics are:
       - ``elapsed_s`` compared against ``elapsed_s_p50`` baseline
       - ``result_mb`` compared against ``result_mb`` baseline
       - ``peak_rss_mb`` compared against ``peak_rss_mb`` baseline
     """
+    confidence = stage_metric_r_squared(scaling_fits or []) if min_r_squared is not None else {}
+    excluded: list[tuple[str, str]] = []
 
     # Normalise stage column to string for join compatibility (Categorical keys
     # can mismatch across DataFrames built independently).
@@ -137,6 +167,14 @@ def check_regressions(
             if current_value is None or baseline_value is None:
                 continue
 
+            # Confidence gate: skip stages whose scaling fit is too noisy to
+            # trust. A missing fit is not evidence of noise, so it's not skipped.
+            if min_r_squared is not None:
+                r2 = confidence.get((stage, metric))
+                if r2 is not None and r2 < min_r_squared:
+                    excluded.append((stage, metric))
+                    continue
+
             # Look up threshold for this (stage, metric) pair
             thr_match = thr_rows.filter(pl.col("metric") == metric)
             if thr_match.is_empty():
@@ -154,4 +192,10 @@ def check_regressions(
             if violation is not None:
                 violations.append(violation)
 
-    return RegressionReport(passed=len(violations) == 0, violations=tuple(violations))
+    confidence_ok = None if min_r_squared is None else (len(excluded) == 0)
+    return RegressionReport(
+        passed=len(violations) == 0,
+        violations=tuple(violations),
+        scaling_fit_confidence_ok=confidence_ok,
+        excluded_low_confidence=tuple(excluded),
+    )
