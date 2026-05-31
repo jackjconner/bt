@@ -13,7 +13,16 @@ import pytest
 from .panel import build_panel
 from .ridge import ModelConfig, RidgeModel
 from .splitters import WalkForwardSplitter
-from .walk_forward import FoldScaler, WalkForwardConfig, walk_forward_cv
+from .walk_forward import (
+    FoldScaler,
+    WalkForwardConfig,
+    _assemble_wf_result,
+    _build_fold_panel_df,
+    _fit_fold,
+    _scale_fold,
+    _score_fold,
+    walk_forward_cv,
+)
 
 # --------------------------------------------------------------------------- #
 # helpers
@@ -305,3 +314,192 @@ def test_predictions_panel_old_fields_unchanged():
     assert len(result.all_true) == n
     assert len(result.all_dates) == n
     assert len(result.all_ids) == n
+
+
+# --------------------------------------------------------------------------- #
+# Extracted helper unit tests
+# --------------------------------------------------------------------------- #
+
+
+class TestScaleFold:
+    def test_no_scaling_returns_same_arrays(self):
+        rng = np.random.default_rng(0)
+        X_tr = rng.normal(0, 1, (50, 4))
+        X_te = rng.normal(0, 1, (10, 4))
+        X_tr_out, X_te_out = _scale_fold(X_tr, X_te, scale_features=False)
+        assert X_tr_out is X_tr
+        assert X_te_out is X_te
+
+    def test_scaling_zero_centers_train(self):
+        rng = np.random.default_rng(1)
+        X_tr = rng.normal(5.0, 2.0, (100, 3))
+        X_te = rng.normal(5.0, 2.0, (20, 3))
+        X_tr_s, _ = _scale_fold(X_tr, X_te, scale_features=True)
+        np.testing.assert_allclose(X_tr_s.mean(axis=0), 0.0, atol=1e-10)
+        np.testing.assert_allclose(X_tr_s.std(axis=0), 1.0, atol=1e-10)
+
+    def test_scaling_uses_train_stats_for_test(self):
+        """Test fold is scaled by train statistics, not its own mean."""
+        rng = np.random.default_rng(2)
+        X_tr = rng.normal(0.0, 1.0, (100, 3))
+        X_te = rng.normal(10.0, 1.0, (20, 3))  # very different distribution
+        _, X_te_s = _scale_fold(X_tr, X_te, scale_features=True)
+        # scaled test mean should be far from 0 (train-mean was ~0, test-mean was ~10)
+        assert abs(X_te_s.mean()) > 5.0
+
+    def test_fold_boundary_single_sample_train(self):
+        """Edge: one-row train fold must not crash."""
+        X_tr = np.array([[1.0, 2.0]])
+        X_te = np.array([[3.0, 4.0], [5.0, 6.0]])
+        # sklearn StandardScaler handles n=1 by zeroing std; _scale_fold must not raise
+        X_tr_s, X_te_s = _scale_fold(X_tr, X_te, scale_features=True)
+        assert X_tr_s.shape == X_tr.shape
+        assert X_te_s.shape == X_te.shape
+
+
+class TestFitFold:
+    def _factory(self, alpha: float) -> RidgeModel:
+        return RidgeModel(ModelConfig(n_features=3, alpha=alpha))
+
+    def test_returns_model_and_fit_result(self):
+        rng = np.random.default_rng(0)
+        X = rng.normal(0, 1, (30, 3))
+        y = X[:, 0] + rng.normal(0, 0.1, 30)
+        model, fit_result = _fit_fold(self._factory, X, y, None, 0.1)
+        assert hasattr(model, "predict")
+        assert hasattr(fit_result, "coef")
+
+    def test_sample_weight_forwarded(self):
+        """Passing weights must change the fit coefficients vs unweighted."""
+        rng = np.random.default_rng(3)
+        X = rng.normal(0, 1, (50, 3))
+        y = X[:, 0] + rng.normal(0, 0.1, 50)
+        w = np.ones(50)
+        w[:10] = 100.0  # up-weight first 10 rows
+
+        _, fit_w = _fit_fold(self._factory, X, y, w, 0.1)
+        _, fit_u = _fit_fold(self._factory, X, y, None, 0.1)
+        assert not np.allclose(fit_w.coef, fit_u.coef, atol=1e-8)
+
+    def test_predict_consistent_with_fit(self):
+        """model.predict should use the weights from _fit_fold, not re-fit."""
+        rng = np.random.default_rng(4)
+        X_tr = rng.normal(0, 1, (40, 3))
+        y_tr = X_tr[:, 0] + rng.normal(0, 0.1, 40)
+        X_te = rng.normal(0, 1, (10, 3))
+        model, fit_result = _fit_fold(self._factory, X_tr, y_tr, None, 0.1)
+        preds = model.predict(X_te)
+        # verify consistency: predict from coef directly
+        expected = X_te @ fit_result.coef + fit_result.intercept
+        np.testing.assert_allclose(preds, expected, rtol=1e-6)
+
+
+class TestScoreFold:
+    def test_returns_tuple_of_correct_types(self):
+        rng = np.random.default_rng(5)
+        n = 40
+        y = rng.normal(0, 1, n)
+        preds = y + rng.normal(0, 0.2, n)
+        groups = np.repeat(np.arange(8), 5)
+        r2, ic, ic_vals = _score_fold(y, preds, groups)
+        assert isinstance(r2, float)
+        assert isinstance(ic, float)
+        assert isinstance(ic_vals, np.ndarray)
+        assert len(ic_vals) == 8  # one per date
+
+    def test_perfect_predictions_high_ic(self):
+        rng = np.random.default_rng(6)
+        n_dates, n_per = 10, 20
+        n = n_dates * n_per
+        y = rng.normal(0, 1, n)
+        preds = y.copy()  # perfect predictions
+        groups = np.repeat(np.arange(n_dates), n_per)
+        _, ic, _ = _score_fold(y, preds, groups)
+        assert ic > 0.99
+
+    def test_constant_preds_zero_ic(self):
+        """Constant predictions must yield IC ≈ 0 (Spearman undefined → 0.0)."""
+        rng = np.random.default_rng(7)
+        y = rng.normal(0, 1, 30)
+        preds = np.zeros(30)
+        groups = np.repeat(np.arange(6), 5)
+        _, ic, _ = _score_fold(y, preds, groups)
+        assert abs(ic) < 1e-10
+
+
+class TestBuildFoldPanelDf:
+    def test_schema_and_types(self):
+        fold_dates = np.array([date(2022, 1, 3), date(2022, 1, 4)], dtype=object)
+        fold_ids = np.array([10, 20], dtype=np.int64)
+        preds = np.array([0.5, -0.3])
+        df = _build_fold_panel_df(fold_dates, fold_ids, preds, fold_idx=0)
+        assert set(df.columns) == {"date", "id", "prediction", "fold"}
+        assert df["id"].dtype == pl.Int64
+        assert df["prediction"].dtype == pl.Float64
+        assert df["fold"].dtype == pl.Int32
+
+    def test_fold_index_tagged_correctly(self):
+        fold_dates = np.array([date(2022, 1, 3)], dtype=object)
+        fold_ids = np.array([1], dtype=np.int64)
+        preds = np.array([0.1])
+        df = _build_fold_panel_df(fold_dates, fold_ids, preds, fold_idx=3)
+        assert df["fold"][0] == 3
+
+    def test_all_rows_populated(self):
+        n = 15
+        fold_dates = np.array(
+            [date(2022, 1, 2) + timedelta(days=i) for i in range(n)], dtype=object
+        )
+        fold_ids = np.arange(n, dtype=np.int64)
+        preds = np.linspace(-1, 1, n)
+        df = _build_fold_panel_df(fold_dates, fold_ids, preds, fold_idx=0)
+        assert len(df) == n
+
+
+class TestAssembleWfResult:
+    def test_empty_folds_returns_empty_arrays(self):
+        result = _assemble_wf_result([], [], [], [], [], [], [])
+        assert len(result.fold_results) == 0
+        assert len(result.all_preds) == 0
+        assert result.predictions_panel is None
+        assert result.mean_r2 == 0.0
+        assert result.mean_ic == 0.0
+
+    def test_single_fold_round_trip(self):
+        rng = np.random.default_rng(8)
+        n = 10
+        preds = rng.normal(0, 1, n)
+        true_vals = rng.normal(0, 1, n)
+        groups = np.repeat(np.array([100, 101], dtype=np.int64), 5)
+        fold_dates = np.array([date(2022, 1, 3)] * n, dtype=object)
+        fold_ids = np.arange(n, dtype=np.int64)
+
+        from .scoring import held_out_r2, rank_ic_score, rank_ic_series
+        from .walk_forward import FoldResult
+
+        # build a minimal FoldResult
+        rng2 = np.random.default_rng(9)
+        X = rng2.normal(0, 1, (20, 2))
+        y = rng2.normal(0, 1, 20)
+        from .ridge import ModelConfig, RidgeModel
+
+        m = RidgeModel(ModelConfig(n_features=2, alpha=1.0))
+        fr_fit = m.fit(X, y)
+        _, ic_vals = rank_ic_series(true_vals, preds, groups)
+        fold_result = FoldResult(
+            fit_result=fr_fit,
+            test_r2=held_out_r2(true_vals, preds),
+            test_ic=rank_ic_score(true_vals, preds, groups),
+            ic_values=ic_vals,
+            chosen_alpha=1.0,
+            n_train=20,
+            n_test=n,
+        )
+        panel_df = _build_fold_panel_df(fold_dates, fold_ids, preds, 0)
+        result = _assemble_wf_result(
+            [fold_result], [preds], [true_vals], [groups], [fold_dates], [fold_ids], [panel_df]
+        )
+        assert len(result.all_preds) == n
+        np.testing.assert_array_equal(result.all_preds, preds)
+        assert result.predictions_panel is not None
+        assert len(result.predictions_panel) == n
