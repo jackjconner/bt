@@ -34,4 +34,20 @@ panels generate on its sessions. Keep `date_axis` for back-compat but default
 new panels to the session axis.
 **Rationale:** Removes the weekend look-ahead/annualization bug.
 **Consequences:** A `session_axis` helper in `etl.source`.
-</content>
+
+## 2026-05-30 — Component harnesses & integration tests
+**Context:** Need end-to-end integration testing and a profiling harness for
+each distinct component (the 7 modules).
+**Decision:** New `harness/` package. `spec.py` defines `ComponentBenchmark`
+(setup → run → frames) + `BenchmarkContext`; `components.py` registers one
+benchmark per module exercising its production path; `runner.py` drives a
+GenSpec grid through `profiling.run_trials`, persists via `profiling.write_run`,
+fits scaling curves (`fit_scaling`) and optionally checks regressions
+(`check_regressions`). Integration tests live under `tests/integration/` as
+per-component contract tests (upstream output → component → downstream input)
+plus a full-pipeline e2e. Chosen by the user over alternatives.
+**Rationale:** Reuses the profiling production features (dogfooding) and keeps
+benchmark wiring out of the modules; contract tests catch interface drift the
+unit tests miss.
+**Consequences:** `harness/` depends on all modules + `etl.datasets`; main.py
+runs the harness after the pipeline.
