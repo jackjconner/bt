@@ -55,3 +55,38 @@ metric:   risk-model build @2k assets — 22.3 ms → 0.43 ms (52×; 18–112× 
 eval:     golden held — 16/17 fields byte-identical; only backtest_p50_s (wall-clock timing) moved, and faster (exempt via --field-tol). Post-merge pytest 401 passed, evalgate within tolerance.
 PR:       #36
 note:     Σ = B·F·Bᵀ + D is now a lazy cached `.cov` property — the dense n×n object never lands on the build/optimizer hot path (variance/contribs go through the factored form B(F(Bᵀw))+specific_var⊙w); build_from_long vectorized (np.unique/searchsorted, no iter_rows). The explore round was dispatched via the Workflow tool, which spawned unsupervised worktree copies that exhausted tmpfs and capsized the run before the judge ran; one worker's rewrite (the wide-layout/lazy-Σ direction) was salvaged, re-reviewed, and individually gated. Workflow-tool tournaments retired in favor of supervised Agent dispatch (DECISIONS.md). Report: reports/round-004/portfolio.md.
+
+## 2026-05-31 — round 005: multi-component explore (one bold rewrite per component)  [accepted ×4]
+type:     explore (5 components dispatched in parallel — analysis/etl/models/signals merged; backtest in flight at time of writing)
+metric:   see per-component entries below
+eval:     all four hold the golden — re-validated together post-merge: full suite 1215 passed/1 skipped, evalgate 17/17
+PR:       #38 #39 #41 #42
+note:     First successful supervised multi-component explore round. Each worker ran in its own worktree with diskguard + the bench lock; the committer worker-isolation guard (refuse component commits from the primary worktree) was added mid-round after several workers' cwd slipped into the main checkout. Reports: reports/round-005/{analysis,etl,models,signals}.md. Baseline ratchet deferred until backtest lands → one consolidated re-baseline.
+
+## 2026-05-31 — analysis: fuse metrics suite into single-pass engine  [accepted]
+type:     explore
+metric:   analysis benchmark suite — 470.4 µs → 169.1 µs (2.78×, 4 joins → 1); harness analysis p50 1.82 → 1.74 ms
+eval:     golden held — gross_sharpe / net_sharpe bit-identical (0.00e+00)
+PR:       #38
+note:     analyze_fused + benchmark_metrics_fused compute from shared moments instead of re-walking/re-joining per metric; +8 equivalence tests. The 2.78× suite win is only reachable through the new API — harness wiring is cross-lane → API_REQUESTS. Report: reports/round-005/analysis.md.
+
+## 2026-05-31 — etl: vectorize corporate-action adjustment over the whole panel  [accepted]
+type:     explore
+metric:   etl p50 (adjust_prices) — 3000 assets 226 → 121 ms (−46%); 100×5040 dates 1103 → 63 ms (−94%, ~18×); all 11 grid points improve, scaling → sub-linear (~n^0.78)
+eval:     golden held — 16/16 accuracy fields 0.00e+00 (adjust_prices is off the pipeline golden path)
+PR:       #39
+note:     one join_asof + a segment-reset reverse-cumprod in log space replaces the per-asset partition→Python-loop→concat; legacy _adjust_single_asset retained as a test oracle; +7 tests. Report: reports/round-005/etl.md.
+
+## 2026-05-31 — models: batched numpy-core walk-forward engine  [accepted]
+type:     explore
+metric:   models walk_forward_cv — 500×252 135.5 → 56.1 ms (2.41×); 1.26–2.41× across the grid
+eval:     golden held — wf_mean_ic byte-identical (0.00e+00); wf_mean_r2 at machine epsilon (1.11e-16)
+PR:       #41
+note:     each fold's standardized Gram assembled as a difference of cumulative block moments; one Cholesky solves all alphas; closed-form weighted ridge matches sklearn ~1e-16; wired additively via WalkForwardConfig.engine="auto" (non-ridge keeps the loop); +18 tests. Report: reports/round-005/models.md.
+
+## 2026-05-31 — signals: lazy/streaming Polars Spearman-IC engine  [accepted]
+type:     explore
+metric:   signals p50 — median 248.6 → 128.7 ms (−48.3%); all 11 grid points improve
+eval:     golden held — ic_raw / ic_neutralized / horizon_ic[*] bit-identical (0.00e+00)
+PR:       #42
+note:     a long-format group_by rank-IC replaces the dense pivot + scipy.rankdata path (Spearman = Pearson on within-date ranks; Polars rank "average" tie-default matches scipy); default engine="lazy", incumbent engine="matrix" retained; +19 bit-identity tests. Report: reports/round-005/signals.md.

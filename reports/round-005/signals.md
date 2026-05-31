@@ -4,15 +4,15 @@ component: signals
 pr: 42
 date: "2026-05-31"
 metric: "signals component p50 ms (lazy rank-IC)"
-verdict: pending
+verdict: accepted
 headline_delta: "signals p50 −48% (median); IC bit-identical"
 ---
 
 # signals · round 005
 
-> **⏳ Pending review.** Open as **PR #42** (`explore/signals-lazy-rankcov`),
-> **not yet merged**. Gates below ran on the branch; verdict flips to `accepted`
-> on merge.
+> **✓ Merged.** Landed as **PR #42** (`explore/signals-lazy-rankcov`) on `main`.
+> Gates ran on the branch and were re-validated post-merge (full suite **1215
+> passed**; evalgate **17/17**).
 
 Replace the dense pivot + `scipy.rankdata` Spearman-IC path with a **fully-lazy /
 streaming Polars rank-IC engine** (`spearman_ic_lazy`), made the default

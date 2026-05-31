@@ -4,15 +4,15 @@ component: analysis
 pr: 38
 date: "2026-05-31"
 metric: "analysis benchmark-suite µs (4 joins → 1)"
-verdict: pending
+verdict: accepted
 headline_delta: "benchmark suite 2.78× (4 joins → 1); golden bit-identical"
 ---
 
 # analysis · round 005
 
-> **⏳ Pending review.** This change is open as **PR #38**
-> (`explore/analysis-fused-engine`) and has **not been merged**. The gates below
-> were run on the branch; the verdict flips to `accepted` on merge.
+> **✓ Merged.** Landed as **PR #38** (`explore/analysis-fused-engine`) on `main`.
+> Gates ran on the branch and were re-validated post-merge with the other
+> round-005 changes (full suite **1215 passed, 1 skipped**; evalgate **17/17**).
 
 Fuse the analysis metrics suite into a single-pass engine (`analyze_fused` +
 `benchmark_metrics_fused`) so each metric cluster computes from **shared
