@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Materialize every synthetic dataset for a GenSpec in memory and report each
+# polars frame's estimated_size (+ total). See datasetmem.py.
+#
+#   scripts/dataset-mem --n-assets 3000 --n-dates 5040
+#   scripts/dataset-mem --n-assets 1000 --n-dates 252 --n-features 50
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+exec uv run python -m datasetmem "$@"
