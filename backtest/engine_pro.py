@@ -223,56 +223,28 @@ class ProductionBacktestEngine:
         if cfg.validate_universe:
             _validate_universe(returns, signals.df)
 
-        # ------------------------------------------------------------------ #
-        # Pre-process optional data into dense matrices indexed by (t, asset).
-        # We sort and pivot once here so the inner loop is O(n_assets).
-        # ------------------------------------------------------------------ #
-        close_mat = _to_matrix_or_none(prices, "close", n_dates, n_assets)
-        adv_mat = _to_matrix_or_none(prices, "adv_20", n_dates, n_assets)
-        comm_mat = _to_matrix_or_none(transaction_costs, "commission_bps", n_dates, n_assets)
-        spread_mat = _to_matrix_or_none(transaction_costs, "half_spread_bps", n_dates, n_assets)
-        fee_mat = _to_matrix_or_none(transaction_costs, "exchange_fee_bps", n_dates, n_assets)
-        mincomm_mat = _to_matrix_or_none(transaction_costs, "min_commission", n_dates, n_assets)
-        impact_mat = _to_matrix_or_none(transaction_costs, "impact_coef", n_dates, n_assets)
-        tradable_mat = _to_bool_matrix_or_none(universe_mask, "tradable", n_dates, n_assets)
-        borrow_mat = _to_matrix_or_none(borrow_rates, "borrow_rate_bps", n_dates, n_assets)
+        mats = _preprocess_inputs(
+            prices, transaction_costs, universe_mask, borrow_rates, n_dates, n_assets
+        )
+        close_mat = mats["close"]
+        adv_mat = mats["adv_20"]
+        comm_mat = mats["commission_bps"]
+        spread_mat = mats["half_spread_bps"]
+        fee_mat = mats["exchange_fee_bps"]
+        mincomm_mat = mats["min_commission"]
+        impact_mat = mats["impact_coef"]
+        tradable_mat = mats["tradable"]
+        borrow_mat = mats["borrow_rate_bps"]
 
         action_index: dict = {}
         if cfg.enable_corporate_actions and corporate_actions is not None:
             action_index = build_action_index(corporate_actions)
 
-        # ------------------------------------------------------------------ #
-        # Determine per-asset weight bounds for constraints.
-        # ------------------------------------------------------------------ #
-        if min_weight_per_asset is not None:
-            lb = min_weight_per_asset
-        elif cfg.min_weight is not None:
-            lb = np.full(n_assets, cfg.min_weight)
-        else:
-            lb = None
+        lb, ub = _resolve_weight_bounds(cfg, n_assets, min_weight_per_asset, max_weight_per_asset)
 
-        if max_weight_per_asset is not None:
-            ub = max_weight_per_asset
-        elif cfg.max_weight is not None:
-            ub = np.full(n_assets, cfg.max_weight)
-        else:
-            ub = None
-
-        # ------------------------------------------------------------------ #
-        # State
-        # ------------------------------------------------------------------ #
-        if cfg.enable_price_accounting and close_mat is not None:
-            # Share-space mode: start fully in cash.
-            shares = np.zeros(n_assets)
-            cash = float(cfg.initial_cash)
-            nav = cash
-        else:
-            shares = None
-            cash = 0.0
-            nav = float(cfg.initial_cash)
-
-        weights = np.zeros(n_assets)  # current portfolio weights (or positions)
-        pending_target: np.ndarray | None = None  # for execution_lag > 0
+        shares, cash, nav = _init_state(cfg, close_mat, n_assets)
+        weights = np.zeros(n_assets)
+        pending_target: np.ndarray | None = None
 
         cumulative_financing_drag: float = 0.0
 
@@ -302,27 +274,9 @@ class ProductionBacktestEngine:
             # 1. Corporate actions (before mark-to-market).
             # -------------------------------------------------------------- #
             if cfg.enable_corporate_actions and d in action_index:
-                todays = action_index[d]
-                ids_ca = [a["id"] for a in todays]
-                types_ca = [a["action_type"] for a in todays]
-                ratios_ca = [a["split_ratio"] for a in todays]
-                amounts_ca = [a["cash_amount"] for a in todays]
-                if shares is not None and close_mat is not None:
-                    cur_prices = close_mat[t]
-                    shares, cur_prices, cash = apply_corporate_actions(
-                        shares,
-                        cur_prices,
-                        cash,
-                        ids_ca,
-                        types_ca,
-                        ratios_ca,
-                        amounts_ca,
-                    )
-                    # Propagate price adjustments back to close_mat for the
-                    # rest of the simulation.  This is a simplified adjustment:
-                    # splits shift the *current* price; historical prices in
-                    # close_mat are not adjusted (point-in-time).
-                    close_mat[t] = cur_prices
+                shares, cash, close_mat = _apply_corporate_actions_at_bar(
+                    t, d, action_index, shares, cash, close_mat
+                )
 
             # -------------------------------------------------------------- #
             # 2. Apply pending execution-lag orders (from bar t-1).
@@ -363,18 +317,8 @@ class ProductionBacktestEngine:
             # -------------------------------------------------------------- #
             should_rebalance = _should_rebalance(t, d, cfg)
             if should_rebalance:
-                raw_target = _softmax(S[t])
-
-                # Apply constraints.
                 tradable_t = tradable_mat[t] if tradable_mat is not None else None
-                raw_target = apply_all_constraints(
-                    raw_target,
-                    tradable=tradable_t if cfg.enable_universe_mask else None,
-                    min_weight=lb,
-                    max_weight=ub,
-                    max_gross=cfg.max_gross_exposure,
-                    max_net=cfg.max_net_exposure,
-                )
+                raw_target = _compute_target_weights(S[t], cfg, tradable_t, lb, ub)
 
                 if cfg.execution_lag > 0:
                     # Store and execute next bar.
@@ -413,91 +357,332 @@ class ProductionBacktestEngine:
             # 4. Mark to market: propagate NAV / positions by today's returns.
             # -------------------------------------------------------------- #
             r = R[t] / 100.0
-
-            if shares is not None and close_mat is not None:
-                # Share-space: prices move; NAV = shares @ new_prices + cash.
-                new_prices = close_mat[t] * (1.0 + r)
-                if t + 1 < n_dates:
-                    close_mat[t + 1] = new_prices  # propagate for next bar
-                nav = nav_from_shares(shares, close_mat[t], cash)
-                # Update weights for constraint checks on next rebalance.
-                weights = weights_from_shares(shares, close_mat[t], nav)
-            else:
-                # Weight-space: legacy propagation.
-                port_ret = float(weights @ r)
-                nav *= 1.0 + port_ret
-                drifted = weights * (1.0 + r)
-                total = drifted.sum()
-                if total > 0.0:
-                    weights = drifted / total
+            weights, shares, nav, close_mat = _mark_to_market(
+                t, r, weights, shares, nav, cash, close_mat, n_dates
+            )
 
             # -------------------------------------------------------------- #
             # 5. Accrue daily financing costs.
             # -------------------------------------------------------------- #
-            if cfg.enable_borrow_costs and borrow_mat is not None:
-                borrow = compute_borrow_cost(weights, nav, borrow_mat[t])
-                nav -= borrow
-                if shares is not None:
-                    cash -= borrow
-
-            if cfg.enable_cash_interest and shares is not None:
-                interest = compute_cash_interest(cash, cfg.cash_annual_rate)
-                cash += interest
-                nav += interest
-
-            if cfg.enable_financing:
-                # Compute dt: calendar days between consecutive dates, capped
-                # at 5 trading days to avoid inflating costs over long gaps.
-                if t + 1 < n_dates:
-                    dt = min(
-                        (dates[t + 1] - dates[t]).days / 365.0,
-                        5.0 / 252.0,
-                    )
-                else:
-                    dt = dt_default
-                financing = compute_financing_cost(
-                    weights,
-                    nav,
-                    cfg.borrow_rate_annual,
-                    cfg.funding_rate_annual,
-                    dt,
-                )
-                nav -= financing
-                if shares is not None:
-                    cash -= financing
-                cumulative_financing_drag += financing
+            nav, cash, cumulative_financing_drag = _accrue_daily_costs(
+                t,
+                dates,
+                weights,
+                shares,
+                nav,
+                cash,
+                borrow_mat,
+                cfg,
+                cumulative_financing_drag,
+                dt_default,
+            )
 
             nav_hist.append(nav)
             cash_hist.append(cash if shares is not None else 0.0)
 
-        fill_log = pl.DataFrame(
-            {
-                "date": fill_dates,
-                "id": fill_ids,
-                "shares": fill_shares,
-                "fill_price": fill_prices_list,
-                "cost": fill_costs_list,
-                "slippage": fill_slippage_list,
-            }
-        )
-        cash_history = pl.DataFrame({"date": dates, "cash": cash_hist})
-
-        return BacktestResult(
-            nav_history=pl.DataFrame({"date": dates, "nav": nav_hist}),
-            trade_log=pl.DataFrame({"date": trade_dates, "id": trade_ids, "quantity": trade_qty}),
-            final_positions=weights
-            if shares is None
-            else weights_from_shares(
-                shares, close_mat[n_dates - 1] if close_mat is not None else np.zeros(n_assets), nav
-            ),
-            fill_log=fill_log,
-            cash_history=cash_history,
-            financing_drag=cumulative_financing_drag,
+        return _assemble_result(
+            dates,
+            nav_hist,
+            cash_hist,
+            trade_dates,
+            trade_ids,
+            trade_qty,
+            fill_dates,
+            fill_ids,
+            fill_shares,
+            fill_prices_list,
+            fill_costs_list,
+            fill_slippage_list,
+            weights,
+            shares,
+            close_mat,
+            nav,
+            n_dates,
+            n_assets,
+            cumulative_financing_drag,
         )
 
 
 # --------------------------------------------------------------------------- #
-# Internal helpers
+# Setup helpers
+# --------------------------------------------------------------------------- #
+
+
+def _preprocess_inputs(
+    prices: pl.DataFrame | None,
+    transaction_costs: pl.DataFrame | None,
+    universe_mask: pl.DataFrame | None,
+    borrow_rates: pl.DataFrame | None,
+    n_dates: int,
+    n_assets: int,
+) -> dict[str, np.ndarray | None]:
+    """Pivot all optional long-format DataFrames to dense (n_dates, n_assets) matrices.
+
+    Pre-process once here so the inner loop is O(n_assets) per bar.
+    """
+    return {
+        "close": _to_matrix_or_none(prices, "close", n_dates, n_assets),
+        "adv_20": _to_matrix_or_none(prices, "adv_20", n_dates, n_assets),
+        "commission_bps": _to_matrix_or_none(
+            transaction_costs, "commission_bps", n_dates, n_assets
+        ),
+        "half_spread_bps": _to_matrix_or_none(
+            transaction_costs, "half_spread_bps", n_dates, n_assets
+        ),
+        "exchange_fee_bps": _to_matrix_or_none(
+            transaction_costs, "exchange_fee_bps", n_dates, n_assets
+        ),
+        "min_commission": _to_matrix_or_none(
+            transaction_costs, "min_commission", n_dates, n_assets
+        ),
+        "impact_coef": _to_matrix_or_none(transaction_costs, "impact_coef", n_dates, n_assets),
+        "tradable": _to_bool_matrix_or_none(universe_mask, "tradable", n_dates, n_assets),
+        "borrow_rate_bps": _to_matrix_or_none(borrow_rates, "borrow_rate_bps", n_dates, n_assets),
+    }
+
+
+def _resolve_weight_bounds(
+    cfg: ProductionBacktestConfig,
+    n_assets: int,
+    min_weight_per_asset: np.ndarray | None,
+    max_weight_per_asset: np.ndarray | None,
+) -> tuple[np.ndarray | None, np.ndarray | None]:
+    """Derive per-asset lower/upper weight bound arrays from config + overrides."""
+    if min_weight_per_asset is not None:
+        lb = min_weight_per_asset
+    elif cfg.min_weight is not None:
+        lb = np.full(n_assets, cfg.min_weight)
+    else:
+        lb = None
+
+    if max_weight_per_asset is not None:
+        ub = max_weight_per_asset
+    elif cfg.max_weight is not None:
+        ub = np.full(n_assets, cfg.max_weight)
+    else:
+        ub = None
+
+    return lb, ub
+
+
+def _init_state(
+    cfg: ProductionBacktestConfig,
+    close_mat: np.ndarray | None,
+    n_assets: int,
+) -> tuple[np.ndarray | None, float, float]:
+    """Return initial (shares, cash, nav) depending on accounting mode."""
+    if cfg.enable_price_accounting and close_mat is not None:
+        # Share-space mode: start fully in cash.
+        return np.zeros(n_assets), float(cfg.initial_cash), float(cfg.initial_cash)
+    return None, 0.0, float(cfg.initial_cash)
+
+
+# --------------------------------------------------------------------------- #
+# Per-bar helpers
+# --------------------------------------------------------------------------- #
+
+
+def _apply_corporate_actions_at_bar(
+    t: int,
+    d: date,
+    action_index: dict,
+    shares: np.ndarray | None,
+    cash: float,
+    close_mat: np.ndarray | None,
+) -> tuple[np.ndarray | None, float, np.ndarray | None]:
+    """Apply all corporate actions scheduled for date ``d``.
+
+    Propagates the price adjustment back into ``close_mat[t]`` for the rest
+    of the simulation (point-in-time: only the current bar is patched).
+
+    Returns updated (shares, cash, close_mat).
+    """
+    if shares is None or close_mat is None:
+        return shares, cash, close_mat
+
+    todays = action_index[d]
+    ids_ca = [a["id"] for a in todays]
+    types_ca = [a["action_type"] for a in todays]
+    ratios_ca = [a["split_ratio"] for a in todays]
+    amounts_ca = [a["cash_amount"] for a in todays]
+
+    cur_prices = close_mat[t]
+    shares, cur_prices, cash = apply_corporate_actions(
+        shares,
+        cur_prices,
+        cash,
+        ids_ca,
+        types_ca,
+        ratios_ca,
+        amounts_ca,
+    )
+    close_mat[t] = cur_prices
+    return shares, cash, close_mat
+
+
+def _compute_target_weights(
+    signal_row: np.ndarray,
+    cfg: ProductionBacktestConfig,
+    tradable_t: np.ndarray | None,
+    lb: np.ndarray | None,
+    ub: np.ndarray | None,
+) -> np.ndarray:
+    """Convert raw signal into constrained target weights."""
+    raw_target = _softmax(signal_row)
+    return apply_all_constraints(
+        raw_target,
+        tradable=tradable_t if cfg.enable_universe_mask else None,
+        min_weight=lb,
+        max_weight=ub,
+        max_gross=cfg.max_gross_exposure,
+        max_net=cfg.max_net_exposure,
+    )
+
+
+def _mark_to_market(
+    t: int,
+    r: np.ndarray,
+    weights: np.ndarray,
+    shares: np.ndarray | None,
+    nav: float,
+    cash: float,
+    close_mat: np.ndarray | None,
+    n_dates: int,
+) -> tuple[np.ndarray, np.ndarray | None, float, np.ndarray | None]:
+    """Propagate NAV and weights by today's returns.
+
+    Share-space: new prices = close * (1 + r); NAV = shares @ new_prices + cash.
+    Weight-space: NAV *= 1 + portfolio_return; weights drift with returns.
+
+    Returns updated (weights, shares, nav, close_mat).
+    """
+    if shares is not None and close_mat is not None:
+        # Share-space: prices move; NAV = shares @ new_prices + cash.
+        new_prices = close_mat[t] * (1.0 + r)
+        if t + 1 < n_dates:
+            close_mat[t + 1] = new_prices  # propagate for next bar
+        nav = nav_from_shares(shares, close_mat[t], cash)
+        # Update weights for constraint checks on next rebalance.
+        weights = weights_from_shares(shares, close_mat[t], nav)
+    else:
+        # Weight-space: legacy propagation.
+        port_ret = float(weights @ r)
+        nav *= 1.0 + port_ret
+        drifted = weights * (1.0 + r)
+        total = drifted.sum()
+        if total > 0.0:
+            weights = drifted / total
+
+    return weights, shares, nav, close_mat
+
+
+def _accrue_daily_costs(
+    t: int,
+    dates: list[date],
+    weights: np.ndarray,
+    shares: np.ndarray | None,
+    nav: float,
+    cash: float,
+    borrow_mat: np.ndarray | None,
+    cfg: ProductionBacktestConfig,
+    cumulative_financing_drag: float,
+    dt_default: float,
+) -> tuple[float, float, float]:
+    """Accrue borrow costs, cash interest, and financing drag for bar ``t``.
+
+    Returns updated (nav, cash, cumulative_financing_drag).
+    """
+    if cfg.enable_borrow_costs and borrow_mat is not None:
+        borrow = compute_borrow_cost(weights, nav, borrow_mat[t])
+        nav -= borrow
+        if shares is not None:
+            cash -= borrow
+
+    if cfg.enable_cash_interest and shares is not None:
+        interest = compute_cash_interest(cash, cfg.cash_annual_rate)
+        cash += interest
+        nav += interest
+
+    if cfg.enable_financing:
+        # Compute dt: calendar days between consecutive dates, capped
+        # at 5 trading days to avoid inflating costs over long gaps.
+        if t + 1 < len(dates):
+            dt = min(
+                (dates[t + 1] - dates[t]).days / 365.0,
+                5.0 / 252.0,
+            )
+        else:
+            dt = dt_default
+        financing = compute_financing_cost(
+            weights,
+            nav,
+            cfg.borrow_rate_annual,
+            cfg.funding_rate_annual,
+            dt,
+        )
+        nav -= financing
+        if shares is not None:
+            cash -= financing
+        cumulative_financing_drag += financing
+
+    return nav, cash, cumulative_financing_drag
+
+
+# --------------------------------------------------------------------------- #
+# Result assembly
+# --------------------------------------------------------------------------- #
+
+
+def _assemble_result(
+    dates: list[date],
+    nav_hist: list[float],
+    cash_hist: list[float],
+    trade_dates: list[date],
+    trade_ids: list[int],
+    trade_qty: list[float],
+    fill_dates: list[date],
+    fill_ids: list[int],
+    fill_shares: list[float],
+    fill_prices_list: list[float],
+    fill_costs_list: list[float],
+    fill_slippage_list: list[float],
+    weights: np.ndarray,
+    shares: np.ndarray | None,
+    close_mat: np.ndarray | None,
+    nav: float,
+    n_dates: int,
+    n_assets: int,
+    cumulative_financing_drag: float,
+) -> BacktestResult:
+    """Build the final BacktestResult from accumulated history lists."""
+    fill_log = pl.DataFrame(
+        {
+            "date": fill_dates,
+            "id": fill_ids,
+            "shares": fill_shares,
+            "fill_price": fill_prices_list,
+            "cost": fill_costs_list,
+            "slippage": fill_slippage_list,
+        }
+    )
+    cash_history = pl.DataFrame({"date": dates, "cash": cash_hist})
+
+    return BacktestResult(
+        nav_history=pl.DataFrame({"date": dates, "nav": nav_hist}),
+        trade_log=pl.DataFrame({"date": trade_dates, "id": trade_ids, "quantity": trade_qty}),
+        final_positions=weights
+        if shares is None
+        else weights_from_shares(
+            shares, close_mat[n_dates - 1] if close_mat is not None else np.zeros(n_assets), nav
+        ),
+        fill_log=fill_log,
+        cash_history=cash_history,
+        financing_drag=cumulative_financing_drag,
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Rebalance helpers
 # --------------------------------------------------------------------------- #
 
 
@@ -509,6 +694,180 @@ def _should_rebalance(
     if cfg.rebalance_dates:
         return d in cfg.rebalance_dates
     return t % cfg.rebalance_every == 0
+
+
+def _compute_fill_prices(
+    t: int,
+    target: np.ndarray,
+    weights: np.ndarray,
+    nav: float,
+    mid_prices: np.ndarray,
+    adv_t: np.ndarray,
+    impact_t: np.ndarray,
+    cfg: ProductionBacktestConfig,
+) -> np.ndarray:
+    """Build per-asset fill prices, optionally applying slippage."""
+    n_assets = len(target)
+    if not cfg.enable_slippage:
+        return mid_prices.copy()
+
+    trade_value_est = (target - weights) * nav  # rough notional estimate
+    return np.array(
+        [
+            fill_price_with_slippage(
+                mid_prices[i],
+                trade_value_est[i],
+                adv_t[i],
+                impact_t[i],
+            )
+            for i in range(n_assets)
+        ]
+    )
+
+
+def _record_fill_log(
+    d: date,
+    share_deltas: np.ndarray,
+    fill_prices: np.ndarray,
+    trade_value: np.ndarray,
+    tc_cost: float,
+    slip_cost: float,
+    asset_ids: np.ndarray,
+    fill_dates: list,
+    fill_ids: list,
+    fill_shares_list: list,
+    fill_prices_list: list,
+    fill_costs_list: list,
+    fill_slippage_list: list,
+) -> None:
+    """Append per-trade entries to the fill log lists (share-space only)."""
+    traded_mask = share_deltas != 0.0
+    abs_total = float(np.abs(trade_value[traded_mask]).sum())
+    for i in asset_ids[traded_mask]:
+        fill_dates.append(d)
+        fill_ids.append(int(i))
+        fill_shares_list.append(float(share_deltas[i]))
+        fill_prices_list.append(float(fill_prices[i]))
+        # Distribute total cost proportionally to trade notional.
+        frac = abs(trade_value[i]) / abs_total if abs_total > 0.0 else 0.0
+        fill_costs_list.append(frac * tc_cost)
+        fill_slippage_list.append(frac * slip_cost)
+
+
+def _rebalance_share_space(
+    t: int,
+    d: date,
+    target: np.ndarray,
+    weights: np.ndarray,
+    shares: np.ndarray,
+    cash: float,
+    nav: float,
+    close_mat: np.ndarray,
+    adv_mat: np.ndarray | None,
+    comm_mat: np.ndarray | None,
+    spread_mat: np.ndarray | None,
+    fee_mat: np.ndarray | None,
+    mincomm_mat: np.ndarray | None,
+    impact_mat: np.ndarray | None,
+    asset_ids: np.ndarray,
+    cfg: ProductionBacktestConfig,
+    fill_dates: list,
+    fill_ids: list,
+    fill_shares_list: list,
+    fill_prices_list: list,
+    fill_costs_list: list,
+    fill_slippage_list: list,
+) -> tuple[np.ndarray, np.ndarray, float, float]:
+    """Execute a rebalance in share-space mode.
+
+    Returns updated (new_weights, shares, cash, nav).
+    """
+    n_assets = len(target)
+    mid_prices = close_mat[t]
+    adv_t = adv_mat[t] if adv_mat is not None else np.zeros(n_assets)
+    impact_t = impact_mat[t] if impact_mat is not None else np.zeros(n_assets)
+
+    fill_prices = _compute_fill_prices(t, target, weights, nav, mid_prices, adv_t, impact_t, cfg)
+
+    share_deltas = target_weights_to_share_deltas(target, shares, fill_prices, nav)
+    trade_value = share_deltas * fill_prices
+
+    tc_cost = 0.0
+    slip_cost = 0.0
+    if cfg.enable_costs and comm_mat is not None:
+        tc_cost = compute_transaction_costs(
+            trade_value,
+            comm_mat[t],
+            cast("np.ndarray", spread_mat)[t],
+            cast("np.ndarray", fee_mat)[t],
+            cast("np.ndarray", mincomm_mat)[t],
+        )
+    if cfg.enable_slippage:
+        slip_cost = compute_slippage(trade_value, adv_t, impact_t)
+
+    total_cost = tc_cost + slip_cost
+    shares, cash = execute_trades(shares, share_deltas, fill_prices, cash, total_cost)
+    nav = nav_from_shares(shares, mid_prices, cash)
+    new_weights = weights_from_shares(shares, mid_prices, nav)
+
+    _record_fill_log(
+        d,
+        share_deltas,
+        fill_prices,
+        trade_value,
+        tc_cost,
+        slip_cost,
+        asset_ids,
+        fill_dates,
+        fill_ids,
+        fill_shares_list,
+        fill_prices_list,
+        fill_costs_list,
+        fill_slippage_list,
+    )
+
+    return new_weights, shares, cash, nav
+
+
+def _rebalance_weight_space(
+    t: int,
+    target: np.ndarray,
+    weights: np.ndarray,
+    nav: float,
+    adv_mat: np.ndarray | None,
+    comm_mat: np.ndarray | None,
+    spread_mat: np.ndarray | None,
+    fee_mat: np.ndarray | None,
+    mincomm_mat: np.ndarray | None,
+    impact_mat: np.ndarray | None,
+    cfg: ProductionBacktestConfig,
+) -> tuple[np.ndarray, float]:
+    """Execute a rebalance in weight-space mode (legacy, no prices).
+
+    Returns updated (new_weights, nav).
+    """
+    n_assets = len(target)
+    deltas = target - weights
+    trade_value = deltas * nav
+    adv_t = adv_mat[t] if adv_mat is not None else np.zeros(n_assets)
+    impact_t = impact_mat[t] if impact_mat is not None else np.zeros(n_assets)
+
+    tc_cost = 0.0
+    slip_cost = 0.0
+    if cfg.enable_costs and comm_mat is not None:
+        tc_cost = compute_transaction_costs(
+            trade_value,
+            comm_mat[t],
+            cast("np.ndarray", spread_mat)[t],
+            cast("np.ndarray", fee_mat)[t],
+            cast("np.ndarray", mincomm_mat)[t],
+        )
+    if cfg.enable_slippage:
+        slip_cost = compute_slippage(trade_value, adv_t, impact_t)
+
+    total_cost = tc_cost + slip_cost
+    nav -= total_cost
+    return target, nav
 
 
 def _execute_rebalance(
@@ -540,99 +899,63 @@ def _execute_rebalance(
 ) -> tuple[np.ndarray, np.ndarray | None, float, float]:
     """Execute a rebalance: compute deltas, apply costs, update state.
 
+    Dispatches to share-space or weight-space mode, then appends to the trade log.
+
     Returns updated (weights, shares, cash, nav).
     """
-    n_assets = len(target)
-
     if shares is not None and close_mat is not None:
-        # Share-space mode: compute per-asset fill prices including slippage.
-        mid_prices = close_mat[t]
-        adv_t = adv_mat[t] if adv_mat is not None else np.zeros(n_assets)
-        impact_t = impact_mat[t] if impact_mat is not None else np.zeros(n_assets)
-
-        # Build fill prices with per-asset slippage (scalar loop is acceptable
-        # because n_assets is typically O(100–10k), not a bottleneck).
-        trade_value_est = (target - weights) * nav  # rough notional estimate
-        fill_prices = np.array(
-            [
-                fill_price_with_slippage(
-                    mid_prices[i],
-                    trade_value_est[i],
-                    adv_t[i],
-                    impact_t[i],
-                )
-                if cfg.enable_slippage
-                else mid_prices[i]
-                for i in range(n_assets)
-            ]
+        new_weights, shares, cash, nav = _rebalance_share_space(
+            t,
+            d,
+            target,
+            weights,
+            shares,
+            cash,
+            nav,
+            close_mat,
+            adv_mat,
+            comm_mat,
+            spread_mat,
+            fee_mat,
+            mincomm_mat,
+            impact_mat,
+            asset_ids,
+            cfg,
+            fill_dates,
+            fill_ids,
+            fill_shares_list,
+            fill_prices_list,
+            fill_costs_list,
+            fill_slippage_list,
+        )
+    else:
+        new_weights, nav = _rebalance_weight_space(
+            t,
+            target,
+            weights,
+            nav,
+            adv_mat,
+            comm_mat,
+            spread_mat,
+            fee_mat,
+            mincomm_mat,
+            impact_mat,
+            cfg,
         )
 
-        share_deltas = target_weights_to_share_deltas(target, shares, fill_prices, nav)
-        trade_value = share_deltas * fill_prices
-
-        # Compute costs.
-        tc_cost = 0.0
-        slip_cost = 0.0
-        if cfg.enable_costs and comm_mat is not None:
-            tc_cost = compute_transaction_costs(
-                trade_value,
-                comm_mat[t],
-                cast("np.ndarray", spread_mat)[t],
-                cast("np.ndarray", fee_mat)[t],
-                cast("np.ndarray", mincomm_mat)[t],
-            )
-        if cfg.enable_slippage:
-            slip_cost = compute_slippage(trade_value, adv_t, impact_t)
-
-        total_cost = tc_cost + slip_cost
-        shares, cash = execute_trades(shares, share_deltas, fill_prices, cash, total_cost)
-        nav = nav_from_shares(shares, mid_prices, cash)
-        new_weights = weights_from_shares(shares, mid_prices, nav)
-
-        # Record fill log.
-        traded_mask = share_deltas != 0.0
-        for i in asset_ids[traded_mask]:
-            fill_dates.append(d)
-            fill_ids.append(int(i))
-            fill_shares_list.append(float(share_deltas[i]))
-            fill_prices_list.append(float(fill_prices[i]))
-            # Distribute total cost proportionally to trade notional.
-            abs_total = float(np.abs(trade_value[traded_mask]).sum())
-            frac = abs(trade_value[i]) / abs_total if abs_total > 0.0 else 0.0
-            fill_costs_list.append(frac * tc_cost)
-            fill_slippage_list.append(frac * slip_cost)
-
-    else:
-        # Weight-space mode (no prices): legacy-style cost deduction from NAV.
-        deltas = target - weights
-        trade_value = deltas * nav
-        adv_t = adv_mat[t] if adv_mat is not None else np.zeros(n_assets)
-        impact_t = impact_mat[t] if impact_mat is not None else np.zeros(n_assets)
-
-        tc_cost = 0.0
-        slip_cost = 0.0
-        if cfg.enable_costs and comm_mat is not None:
-            tc_cost = compute_transaction_costs(
-                trade_value,
-                comm_mat[t],
-                cast("np.ndarray", spread_mat)[t],
-                cast("np.ndarray", fee_mat)[t],
-                cast("np.ndarray", mincomm_mat)[t],
-            )
-        if cfg.enable_slippage:
-            slip_cost = compute_slippage(trade_value, adv_t, impact_t)
-
-        total_cost = tc_cost + slip_cost
-        nav -= total_cost
-        new_weights = target
-
     # Record trade log (legacy format — quantity = notional traded).
+    n_assets = len(target)
     trade_dates.extend([d] * n_assets)
     trade_ids.extend(asset_ids.tolist())
     deltas_for_log = target - weights
     trade_qty.extend((deltas_for_log * nav).tolist())
 
     return new_weights, shares, cash, nav
+
+
+# --------------------------------------------------------------------------- #
+# Data helpers
+# --------------------------------------------------------------------------- #
 
 
 def _to_matrix_or_none(
