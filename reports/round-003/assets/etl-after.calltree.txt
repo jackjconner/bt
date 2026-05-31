@@ -1,0 +1,39 @@
+
+  _     ._   __/__   _ _  _  _ _/_   Recorded: 11:15:55  Samples:  141
+ /_//_/// /_\ / //_// / //_'/ //     Duration: 0.191     CPU time: 0.602
+/   _/                      v5.1.2
+
+Profile at /home/jack/code/bt/profiling/flamegraph.py:375
+
+0.191 capture_both  profiling/flamegraph.py:335
+└─ 0.191 <lambda>  harness/runner.py:141
+   └─ 0.191 _etl_run  harness/components.py:70
+      ├─ 0.151 adjust_prices  etl/adjust.py:129
+      │  ├─ 0.122 _adjust_single_asset  etl/adjust.py:72
+      │  │  ├─ 0.056 _apply_factor  etl/adjust.py:66
+      │  │  ├─ 0.039 Series.to_list  polars/series/series.py:4710
+      │  │  │  └─ 0.039 PySeries.to_list  <built-in>
+      │  │  ├─ 0.024 [self]  etl/adjust.py
+      │  │  └─ 0.003 DataFrame.with_columns  polars/dataframe/frame.py:10450
+      │  └─ 0.027 DataFrame.sort  polars/dataframe/frame.py:6034
+      │        [4 frames hidden]  polars, <built-in>
+      ├─ 0.025 check  etl/quality.py:131
+      │  ├─ 0.013 _check_duplicates  etl/quality.py:71
+      │  │  └─ 0.012 GroupBy.len  polars/dataframe/group_by.py:572
+      │  │        [5 frames hidden]  polars, <built-in>
+      │  ├─ 0.008 _check_spike_outliers  etl/quality.py:114
+      │  │  ├─ 0.006 DataFrame.with_columns  polars/dataframe/frame.py:10450
+      │  │  │     [4 frames hidden]  polars, <built-in>
+      │  │  └─ 0.003 DataFrame.filter  polars/dataframe/frame.py:5350
+      │  │        [4 frames hidden]  polars, <built-in>
+      │  └─ 0.004 _check_frozen_series  etl/quality.py:99
+      │     └─ 0.004 GroupBy.agg  polars/dataframe/group_by.py:267
+      │           [4 frames hidden]  polars, <built-in>
+      └─ 0.014 to_masked_matrix  etl/masked_pivot.py:24
+         ├─ 0.006 wrapper  polars/_utils/deprecation.py:123
+         │     [5 frames hidden]  polars, <built-in>
+         ├─ 0.005 DataFrame.sort  polars/dataframe/frame.py:6034
+         │     [4 frames hidden]  polars, <built-in>
+         └─ 0.002 Series.wrapper  polars/series/utils.py:97
+               [5 frames hidden]  polars, <built-in>
+

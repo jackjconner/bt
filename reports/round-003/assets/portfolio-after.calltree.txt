@@ -1,0 +1,29 @@
+
+  _     ._   __/__   _ _  _  _ _/_   Recorded: 11:16:15  Samples:  6
+ /_//_/// /_\ / //_// / //_'/ //     Duration: 0.005     CPU time: 0.008
+/   _/                      v5.1.2
+
+Profile at /home/jack/code/bt/profiling/flamegraph.py:375
+
+0.005 capture_both  profiling/flamegraph.py:335
+└─ 0.005 <lambda>  harness/runner.py:141
+   └─ 0.005 _portfolio_run  harness/components.py:184
+      ├─ 0.005 mean_variance  portfolio/optimizer.py:115
+      │  └─ 0.005 _solve_osqp_factor  portfolio/optimizer.py:690
+      │     ├─ 0.002 _build_constraint_matrix_factor  portfolio/optimizer.py:647
+      │     │  └─ 0.002 _build_constraint_matrix  portfolio/optimizer.py:415
+      │     │     ├─ 0.001 vstack  scipy/sparse/_construct.py:1059
+      │     │     │     [2 frames hidden]  scipy
+      │     │     └─ 0.001 _build_epigraph_rows  portfolio/optimizer.py:316
+      │     │        └─ 0.001 csr_matrix.__neg__  scipy/sparse/_data.py:49
+      │     │              [5 frames hidden]  scipy, <built-in>
+      │     ├─ 0.001 OSQP.setup  osqp/interface.py:370
+      │     │  └─ 0.001 OSQP.raises_error  osqp/interface.py:128
+      │     ├─ 0.001 _build_quadratic_cost_factor  portfolio/optimizer.py:599
+      │     │  └─ 0.001 diags  scipy/sparse/_construct.py:445
+      │     │        [4 frames hidden]  scipy, <built-in>
+      │     └─ 0.001 OSQP.solve  osqp/interface.py:403
+      │        └─ 0.001 pybind11_detail_function_record_v1_system_libstdcpp_gxx_abi_1xxx_use_cxx11_abi_1.solve  <built-in>
+      └─ 0.000 build_from_long  portfolio/risk_model.py:113
+         └─ 0.000 DataFrame.sort  polars/dataframe/frame.py:6034
+

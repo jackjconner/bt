@@ -1,0 +1,59 @@
+
+  _     ._   __/__   _ _  _  _ _/_   Recorded: 11:15:59  Samples:  363
+ /_//_/// /_\ / //_// / //_'/ //     Duration: 0.538     CPU time: 0.968
+/   _/                      v5.1.2
+
+Profile at /home/jack/code/bt/profiling/flamegraph.py:375
+
+0.538 capture_both  profiling/flamegraph.py:335
+└─ 0.538 <lambda>  harness/runner.py:141
+   └─ 0.538 _signals_run  harness/components.py:90
+      ├─ 0.207 neutralize_sector  signals/neutralize.py:92
+      │  ├─ 0.186 _ols_residual  signals/neutralize.py:57
+      │  │  ├─ 0.064 lstsq  numpy/linalg/_linalg.py:2418
+      │  │  │     [2 frames hidden]  numpy
+      │  │  ├─ 0.042 _std  numpy/_core/_methods.py:217
+      │  │  │     [3 frames hidden]  numpy, <built-in>
+      │  │  ├─ 0.040 [self]  signals/neutralize.py
+      │  │  ├─ 0.029 _mean  numpy/_core/_methods.py:115
+      │  │  │     [2 frames hidden]  <built-in>, numpy
+      │  │  └─ 0.010 _sum  numpy/_core/_methods.py:47
+      │  │     └─ 0.009 ufunc.reduce  <built-in>
+      │  ├─ 0.007 to_matrix  etl/source.py:23
+      │  └─ 0.006 Series.wrapper  polars/series/utils.py:97
+      │        [3 frames hidden]  polars
+      ├─ 0.198 ic_horizon_curve  signals/horizon.py:70
+      │  ├─ 0.157 _ic_series_from_matrices  signals/ic.py:205
+      │  │  ├─ 0.128 _spearman_ic_rows  signals/ic.py:19
+      │  │  │  └─ 0.121 rankdata  scipy/stats/_stats_py.py:9903
+      │  │  │        [11 frames hidden]  scipy, numpy, <built-in>
+      │  │  └─ 0.027 [self]  signals/ic.py
+      │  └─ 0.039 to_matrix  etl/source.py:23
+      │     ├─ 0.020 wrapper  polars/_utils/deprecation.py:123
+      │     │     [10 frames hidden]  polars, <built-in>
+      │     └─ 0.017 DataFrame.sort  polars/dataframe/frame.py:6034
+      │           [4 frames hidden]  polars, <built-in>
+      ├─ 0.080 quantile_spread  signals/quantile.py:126
+      │  ├─ 0.043 _quantile_spread_rows_vectorized  signals/quantile.py:59
+      │  │  ├─ 0.016 [self]  signals/quantile.py
+      │  │  ├─ 0.016 rankdata  scipy/stats/_stats_py.py:9903
+      │  │  │     [6 frames hidden]  scipy, numpy, <built-in>
+      │  │  └─ 0.010 _sum  numpy/_core/_methods.py:47
+      │  │     └─ 0.010 ufunc.reduce  <built-in>
+      │  ├─ 0.023 to_matrix  etl/source.py:23
+      │  │  ├─ 0.013 wrapper  polars/_utils/deprecation.py:123
+      │  │  │     [5 frames hidden]  polars, <built-in>
+      │  │  └─ 0.009 DataFrame.sort  polars/dataframe/frame.py:6034
+      │  │        [4 frames hidden]  polars, <built-in>
+      │  └─ 0.006 DataFrame.__init__  polars/dataframe/frame.py:378
+      │        [4 frames hidden]  polars, functools, <built-in>
+      └─ 0.050 ic_series_v2  signals/ic.py:258
+         ├─ 0.035 _ic_series_from_matrices  signals/ic.py:205
+         │  ├─ 0.029 _spearman_ic_rows  signals/ic.py:19
+         │  │  └─ 0.027 rankdata  scipy/stats/_stats_py.py:9903
+         │  │        [6 frames hidden]  scipy, numpy, <built-in>
+         │  └─ 0.006 [self]  signals/ic.py
+         └─ 0.014 to_matrix  etl/source.py:23
+            └─ 0.009 wrapper  polars/_utils/deprecation.py:123
+                  [5 frames hidden]  polars, <built-in>
+

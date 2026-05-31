@@ -1,0 +1,36 @@
+
+  _     ._   __/__   _ _  _  _ _/_   Recorded: 11:16:13  Samples:  1245
+ /_//_/// /_\ / //_// / //_'/ //     Duration: 1.397     CPU time: 7.258
+/   _/                      v5.1.2
+
+Profile at /home/jack/code/bt/profiling/flamegraph.py:375
+
+1.396 capture_both  profiling/flamegraph.py:335
+└─ 1.396 <lambda>  harness/runner.py:141
+   └─ 1.396 _models_run  harness/components.py:117
+      └─ 1.396 walk_forward_cv  models/walk_forward.py:400
+         ├─ 1.046 _score_fold  models/walk_forward.py:297
+         │  └─ 1.045 rank_ic_series  models/scoring.py:31
+         │     ├─ 0.865 _spearman  models/scoring.py:23
+         │     │  └─ 0.855 spearmanr  scipy/stats/_stats_py.py:5168
+         │     │        [47 frames hidden]  numpy, scipy, <built-in>
+         │     └─ 0.169 [self]  models/scoring.py
+         ├─ 0.163 _best_alpha  models/walk_forward.py:90
+         │  └─ 0.156 RidgeModel.fit  models/ridge.py:30
+         │     ├─ 0.128 wrapper  sklearn/base.py:1319
+         │     │     [12 frames hidden]  sklearn, numpy, <built-in>
+         │     └─ 0.028 Ridge.score  sklearn/base.py:610
+         │           [2 frames hidden]  sklearn
+         ├─ 0.060 _scale_fold  models/walk_forward.py:250
+         │  └─ 0.052 FoldScaler.fit_transform  models/walk_forward.py:63
+         │     └─ 0.052 StandardScaler.wrapped  sklearn/utils/_set_output.py:314
+         │           [9 frames hidden]  sklearn, numpy, <built-in>
+         ├─ 0.043 _fit_fold  models/walk_forward.py:270
+         │  └─ 0.043 RidgeModel.fit  models/ridge.py:30
+         │     └─ 0.038 wrapper  sklearn/base.py:1319
+         │           [5 frames hidden]  sklearn, numpy
+         ├─ 0.042 _build_fold_panel_df  models/walk_forward.py:319
+         │  └─ 0.033 DataFrame.__init__  polars/dataframe/frame.py:378
+         │        [5 frames hidden]  polars, <built-in>
+         └─ 0.019 [self]  models/walk_forward.py
+

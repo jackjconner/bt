@@ -1,0 +1,52 @@
+
+  _     ._   __/__   _ _  _  _ _/_   Recorded: 11:16:20  Samples:  189
+ /_//_/// /_\ / //_// / //_'/ //     Duration: 0.233     CPU time: 0.379
+/   _/                      v5.1.2
+
+Profile at /home/jack/code/bt/profiling/flamegraph.py:375
+
+0.233 capture_both  profiling/flamegraph.py:335
+└─ 0.233 <lambda>  harness/runner.py:141
+   └─ 0.233 _backtest_run  harness/components.py:226
+      ├─ 0.230 ProductionBacktestEngine.run  backtest/engine_pro.py:171
+      │  ├─ 0.119 _execute_rebalance  backtest/engine_pro.py:898
+      │  │  ├─ 0.095 _rebalance_weight_space  backtest/engine_pro.py:857
+      │  │  │  ├─ 0.044 compute_transaction_costs  backtest/costs.py:29
+      │  │  │  │  ├─ 0.040 [self]  backtest/costs.py
+      │  │  │  │  └─ 0.004 _sum  numpy/_core/_methods.py:47
+      │  │  │  │     └─ 0.004 ufunc.reduce  <built-in>
+      │  │  │  ├─ 0.036 compute_slippage  backtest/slippage.py:28
+      │  │  │  │  ├─ 0.030 [self]  backtest/slippage.py
+      │  │  │  │  └─ 0.005 _sum  numpy/_core/_methods.py:47
+      │  │  │  │     └─ 0.005 ufunc.reduce  <built-in>
+      │  │  │  └─ 0.014 [self]  backtest/engine_pro.py
+      │  │  ├─ 0.011 [self]  backtest/engine_pro.py
+      │  │  ├─ 0.010 ndarray.tolist  <built-in>
+      │  │  └─ 0.003 list.extend  <built-in>
+      │  ├─ 0.035 _assemble_result  backtest/engine_pro.py:661
+      │  │  └─ 0.035 DataFrame.__init__  polars/dataframe/frame.py:378
+      │  │        [7 frames hidden]  polars, <built-in>
+      │  ├─ 0.022 _compute_target_weights  backtest/engine_pro.py:548
+      │  │  ├─ 0.017 _softmax  backtest/engine.py:14
+      │  │  │  ├─ 0.008 _amax  numpy/_core/_methods.py:39
+      │  │  │  │  └─ 0.007 ufunc.reduce  <built-in>
+      │  │  │  └─ 0.007 _sum  numpy/_core/_methods.py:47
+      │  │  │     └─ 0.007 ufunc.reduce  <built-in>
+      │  │  └─ 0.005 apply_all_constraints  backtest/constraints.py:111
+      │  │     └─ 0.004 apply_universe_mask  backtest/constraints.py:34
+      │  ├─ 0.019 to_matrix  etl/source.py:23
+      │  │  ├─ 0.009 DataFrame.sort  polars/dataframe/frame.py:6034
+      │  │  │     [4 frames hidden]  polars, <built-in>
+      │  │  └─ 0.009 wrapper  polars/_utils/deprecation.py:123
+      │  │        [10 frames hidden]  polars, <built-in>
+      │  ├─ 0.012 [self]  backtest/engine_pro.py
+      │  ├─ 0.011 _mark_to_market  backtest/engine_pro.py:567
+      │  │  ├─ 0.006 [self]  backtest/engine_pro.py
+      │  │  └─ 0.005 _sum  numpy/_core/_methods.py:47
+      │  │     └─ 0.005 ufunc.reduce  <built-in>
+      │  └─ 0.009 _preprocess_inputs  backtest/engine_pro.py:411
+      │     └─ 0.007 _df_to_multi_matrix  backtest/engine_pro.py:986
+      │        └─ 0.005 DataFrame.sort  polars/dataframe/frame.py:6034
+      │              [4 frames hidden]  polars, <built-in>
+      └─ 0.003 [self]  harness/components.py
+
