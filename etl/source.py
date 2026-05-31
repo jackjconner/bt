@@ -26,6 +26,22 @@ def date_axis(n_dates: int, start: str = "2000-01-01") -> pl.Series:
     return pl.date_range(start_d, end_d, interval="1d", eager=True)
 
 
+def session_axis(n_dates: int, start: str = "2000-01-01") -> pl.Series:
+    """Trading-day axis: `n_dates` consecutive weekday (Mon–Fri) sessions.
+
+    `date_axis` walks calendar days, which silently puts weekends in the panel
+    and makes "next day" forward returns and 252-day annualization
+    inconsistent. Production panels use this business-day axis instead. (Public
+    holidays are modeled separately via the `trading_calendar` dataset.)
+    """
+    start_d = date.fromisoformat(start)
+    span = pl.date_range(
+        start_d, start_d + timedelta(days=2 * n_dates + 7), interval="1d", eager=True
+    )
+    sessions = span.filter(span.dt.weekday() <= 5)
+    return sessions.head(n_dates)
+
+
 def generate_returns(
     n_assets: int,
     n_dates: int,
