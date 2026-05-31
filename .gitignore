@@ -14,3 +14,6 @@ wheels/
 
 # Oversight deck runtime state (round_state.json, history parquet, artifacts)
 .oversight/
+
+# Generated change-report static site
+reports/_site/
