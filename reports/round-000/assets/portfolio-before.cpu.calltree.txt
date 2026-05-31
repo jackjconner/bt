@@ -1,0 +1,15 @@
+portfolio · round 000 · BEFORE flame graph (calltree)
+captured by: pyinstrument  |  run_id: round-000-before  |  git: abc1234
+grid point: 500 assets  |  total time: 4178 ms
+
+portfolio.optimizer.optimise_weights  4178ms (100%)
+  scipy.optimize.minimize             3854ms ( 92.3%)
+    scipy.optimize._slsqp_py.fmin_slsqp  3851ms
+      _minimize_slsqp                 3848ms
+        [Fortran SLSQP]               3836ms
+          _constraints_jacobian        171ms
+  numpy.linalg.eigh                    175ms (  4.2%)
+  sklearn.covariance.ledoit_wolf_cov   129ms (  3.1%)
+    numpy.linalg.eigh                   87ms
+    numpy.dot                           21ms
+  other                                 20ms (  0.4%)

@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+# Generate and optionally serve the bt change-report static site.
+#
+#   scripts/reports build    → render reports/_site/ (index + per-report pages)
+#   scripts/reports --serve  → build, then serve _site/ on the tailnet over HTTPS
+#                               via python -m http.server → tailscale serve
+#
+# Tailscale and Python are system prerequisites for --serve, checked at runtime.
+# The static server binds to 127.0.0.1 only; tailscale proxies the HTTPS edge.
+#
+# Never bypasses gates, never silently falls back on missing tools.
+set -euo pipefail
+
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT"
+
+PORT=7682
+SERVE_URL="https://archbtw.tailcbac91.ts.net"
+REPORTS_DIR="reports"
+
+_build() {
+  echo "reports: building site from ${REPORTS_DIR}/"
+  uv run python -m reportsite --reports-dir "$REPORTS_DIR"
+  echo "reports: site ready at ${REPORTS_DIR}/_site/index.html"
+}
+
+if [ "${1:-}" = "build" ]; then
+  _build
+  exit 0
+fi
+
+if [ "${1:-}" != "--serve" ]; then
+  echo "usage: scripts/reports build" >&2
+  echo "       scripts/reports --serve" >&2
+  exit 2
+fi
+
+# --- --serve: serve _site/ over the tailnet ------------------------------------
+
+command -v tailscale >/dev/null 2>&1 || {
+  echo "reports: 'tailscale' not found on PATH — needed to serve on the tailnet." >&2
+  echo "         check that tailscale is installed and on PATH." >&2
+  exit 1
+}
+
+_build
+
+httpd_pid=""
+cleanup() {
+  tailscale serve --https=443 off >/dev/null 2>&1 || true
+  if [ -n "$httpd_pid" ]; then
+    kill "$httpd_pid" >/dev/null 2>&1 || true
+  fi
+}
+trap cleanup EXIT INT TERM
+
+# Serve the static site from _site/ on localhost.
+python3 -m http.server "$PORT" \
+  --directory "${REPORTS_DIR}/_site" \
+  --bind 127.0.0.1 \
+  >/dev/null 2>&1 &
+httpd_pid=$!
+
+# Map the tailnet HTTPS endpoint to the local server, in the background.
+tailscale serve --bg --https=443 "http://127.0.0.1:${PORT}"
+
+echo "reports: serving change reports at ${SERVE_URL}"
+echo "reports: Ctrl-C to tear down (tailscale serve off + stop http.server)."
+
+wait "$httpd_pid"
