@@ -51,7 +51,7 @@ from .accounting import (
     target_weights_to_share_deltas,
     weights_from_shares,
 )
-from .constraints import apply_all_constraints
+from .constraints import apply_all_constraints, apply_short_availability_cap
 from .corporate import apply_corporate_actions, build_action_index
 from .costs import (
     compute_borrow_cost,
@@ -121,6 +121,13 @@ class ProductionBacktestConfig:
         Net exposure cap (``|sum(w)|``).  ``1.0`` = no net-short constraint.
     validate_universe:
         Assert that the signal and returns frames share the same asset ids.
+    enable_short_availability_gating:
+        Gate short positions by the ``borrow_rates`` dataset: forbid shorts on
+        names with ``shortable=False``, cap each short's market value at its
+        ``loan_availability``, and charge a daily borrow cost (per-asset
+        ``borrow_rate_bps``) on the surviving shorts.  Requires ``borrow_rates``
+        to be passed to ``run``.  Default ``False`` — off; output is identical
+        to pre-feature runs.
     enable_financing:
         Deduct per-period financing costs (borrow + leverage funding) from NAV.
         Default ``False`` — feature is off; output is identical to pre-feature runs.
@@ -148,6 +155,7 @@ class ProductionBacktestConfig:
     enable_borrow_costs: bool = False
     enable_cash_interest: bool = False
     cash_annual_rate: float = 0.05
+    enable_short_availability_gating: bool = False
     enable_financing: bool = False
     borrow_rate_annual: float = 0.0
     funding_rate_annual: float = 0.0
@@ -236,6 +244,16 @@ class ProductionBacktestEngine:
         impact_mat = mats["impact_coef"]
         tradable_mat = mats["tradable"]
         borrow_mat = mats["borrow_rate_bps"]
+        loan_avail_mat = mats["loan_availability"]
+        shortable_mat = mats["shortable"]
+
+        if cfg.enable_short_availability_gating and (
+            shortable_mat is None or loan_avail_mat is None or borrow_mat is None
+        ):
+            raise ValueError(
+                "enable_short_availability_gating requires borrow_rates with "
+                "shortable, loan_availability, and borrow_rate_bps columns"
+            )
 
         action_index: dict = {}
         if cfg.enable_corporate_actions and corporate_actions is not None:
@@ -339,6 +357,14 @@ class ProductionBacktestEngine:
             if should_rebalance:
                 tradable_t = tradable_mat[t] if tradable_mat is not None else None
                 raw_target = _compute_target_weights(S[t], cfg, tradable_t, lb, ub)
+
+                if cfg.enable_short_availability_gating:
+                    raw_target = apply_short_availability_cap(
+                        raw_target,
+                        shortable=cast("np.ndarray", shortable_mat)[t],
+                        loan_availability=cast("np.ndarray", loan_avail_mat)[t],
+                        nav=nav,
+                    )
 
                 if cfg.execution_lag > 0:
                     # Store and execute next bar.
@@ -478,10 +504,16 @@ def _preprocess_inputs(
     result["tradable"] = _to_bool_matrix_or_none(universe_mask, "tradable", n_dates, n_assets)
 
     if borrow_rates is not None:
-        bm = _df_to_multi_matrix(borrow_rates, ["borrow_rate_bps"], n_dates, n_assets, copy=False)
+        bm = _df_to_multi_matrix(
+            borrow_rates, ["borrow_rate_bps", "loan_availability"], n_dates, n_assets, copy=False
+        )
         result["borrow_rate_bps"] = bm.get("borrow_rate_bps")
+        result["loan_availability"] = bm.get("loan_availability")
+        result["shortable"] = _to_bool_matrix_or_none(borrow_rates, "shortable", n_dates, n_assets)
     else:
         result["borrow_rate_bps"] = None
+        result["loan_availability"] = None
+        result["shortable"] = None
 
     return result
 
@@ -638,6 +670,12 @@ def _accrue_daily_costs(
     Returns updated (nav, cash, cumulative_financing_drag).
     """
     if cfg.enable_borrow_costs and borrow_mat is not None:
+        borrow = compute_borrow_cost(weights, nav, borrow_mat[t])
+        nav -= borrow
+        if shares is not None:
+            cash -= borrow
+
+    if cfg.enable_short_availability_gating and borrow_mat is not None:
         borrow = compute_borrow_cost(weights, nav, borrow_mat[t])
         nav -= borrow
         if shares is not None:

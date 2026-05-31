@@ -30,6 +30,7 @@ from backtest.constraints import (
     apply_all_constraints,
     apply_gross_exposure_cap,
     apply_net_exposure_cap,
+    apply_short_availability_cap,
     apply_universe_mask,
     apply_weight_caps,
 )
@@ -1508,3 +1509,108 @@ def test_weight_space_eligible_excludes_path_dependent_features(prices_df):
     assert not weight_space_eligible(_cfg(enable_borrow_costs=True), None)
     assert not weight_space_eligible(_cfg(enable_cash_interest=True), None)
     assert not weight_space_eligible(_cfg(enable_financing=True), None)
+    assert not weight_space_eligible(_cfg(enable_short_availability_gating=True), None)
+
+
+# --------------------------------------------------------------------------- #
+# Short-availability gating + financing
+# --------------------------------------------------------------------------- #
+
+
+def test_apply_short_availability_cap_forbids_nonshortable():
+    """A short on a non-shortable name is zeroed; longs are untouched."""
+    w = np.array([0.4, -0.3, -0.2])
+    shortable = np.array([True, False, True])
+    loan_avail = np.array([0.0, 0.0, 1e12])  # huge cap on the shortable name
+    result = apply_short_availability_cap(
+        w, shortable=shortable, loan_availability=loan_avail, nav=1_000_000.0
+    )
+    assert result[0] == pytest.approx(0.4)  # long unchanged
+    assert result[1] == pytest.approx(0.0)  # non-shortable short forbidden
+    assert result[2] == pytest.approx(-0.2)  # shortable, under cap → unchanged
+
+
+def test_apply_short_availability_cap_limits_by_loan_availability():
+    """Short market value is capped at loan_availability (dollar → weight)."""
+    nav = 1_000_000.0
+    w = np.array([-0.5])  # wants $500k short
+    shortable = np.array([True])
+    loan_avail = np.array([100_000.0])  # only $100k borrowable → weight floor -0.1
+    result = apply_short_availability_cap(
+        w, shortable=shortable, loan_availability=loan_avail, nav=nav
+    )
+    assert result[0] == pytest.approx(-0.1)
+
+
+def test_apply_short_availability_cap_leaves_long_only_unchanged():
+    """A long-only weight vector passes through byte-identically."""
+    w = np.array([0.3, 0.5, 0.2])
+    shortable = np.array([False, False, True])
+    loan_avail = np.array([0.0, 0.0, 5_000.0])
+    result = apply_short_availability_cap(
+        w, shortable=shortable, loan_availability=loan_avail, nav=1_000_000.0
+    )
+    np.testing.assert_array_equal(result, w)
+
+
+def _short_signal():
+    """A signal frame used to drive the production engine in long-short configs."""
+    return SignalFrame.random_continuous(N_ASSETS, N_DATES, seed=99)
+
+
+def test_short_gating_charges_borrow_on_surviving_shorts():
+    """Flag ON: ``_accrue_daily_costs`` charges a daily borrow cost on shorts.
+
+    The softmax→constraint pipeline can't synthesize shorts through the public
+    ``run`` path, so the financing accrual is exercised directly on a weight
+    vector that holds a real short — proving the gating flag wires the borrow
+    charge (and that the flag-OFF path charges nothing).
+    """
+    weights = np.array([0.6, -0.4])  # one long, one $400k-equivalent short
+    nav = 1_000_000.0
+    borrow_mat = np.array([[100.0, 200.0]])  # bps, one row (t=0)
+    dates = [date(2020, 1, 1)]
+
+    cfg_on = ProductionBacktestConfig(n_assets=2, n_dates=1, enable_short_availability_gating=True)
+    nav_on, _, _ = _accrue_daily_costs(
+        0, dates, weights, None, nav, 0.0, borrow_mat, cfg_on, 0.0, 1.0 / 252.0
+    )
+    # Daily borrow on the 0.4 short at 200bps: 0.4 * nav * 0.02 / 252.
+    expected = 0.4 * nav * 200.0 / 1e4 / 252.0
+    assert nav - nav_on == pytest.approx(expected)
+
+    cfg_off = ProductionBacktestConfig(n_assets=2, n_dates=1)
+    nav_off, _, _ = _accrue_daily_costs(
+        0, dates, weights, None, nav, 0.0, borrow_mat, cfg_off, 0.0, 1.0 / 252.0
+    )
+    assert nav_off == nav  # flag off → no charge
+
+
+def test_short_gating_flag_off_is_byte_identical(returns_df):
+    """Flag OFF with borrow_rates passed reproduces the no-borrow run exactly.
+
+    This is the load-bearing additive-feature guard: the new dataset fields and
+    code path must not perturb output unless the flag is set.
+    """
+    signals = _short_signal()
+    spec = GenSpec(n_assets=N_ASSETS, n_dates=N_DATES, seed=42)
+    borrow_df = generate("borrow_rates", spec)
+
+    cfg = _cfg(min_weight=-0.5, max_weight=0.5, max_gross_exposure=1.0)
+
+    without = ProductionBacktestEngine(cfg).run(returns_df, signals)
+    with_data = ProductionBacktestEngine(cfg).run(returns_df, signals, borrow_rates=borrow_df)
+
+    np.testing.assert_array_equal(
+        without.nav_history["nav"].to_numpy(), with_data.nav_history["nav"].to_numpy()
+    )
+    np.testing.assert_array_equal(without.final_positions, with_data.final_positions)
+    assert without.financing_drag == with_data.financing_drag
+
+
+def test_short_gating_requires_borrow_rates(returns_df):
+    """Enabling the flag without borrow_rates is a hard error, not a silent no-op."""
+    signals = _short_signal()
+    cfg = _cfg(enable_short_availability_gating=True, min_weight=-0.5, max_gross_exposure=1.0)
+    with pytest.raises(ValueError, match="enable_short_availability_gating requires"):
+        ProductionBacktestEngine(cfg).run(returns_df, signals)
