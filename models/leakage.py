@@ -95,6 +95,28 @@ class LeakageReport:
 
 
 # --------------------------------------------------------------------------- #
+# Shared helper
+# --------------------------------------------------------------------------- #
+
+
+def _build_next_period_returns(daily_returns: pl.DataFrame) -> pl.DataFrame:
+    """Build a (date, id, return_next_date) frame via a per-id shift.
+
+    For each (date, id) row the ``return_next_date`` column holds the single-
+    period return from the *next* trading date for that id.  The last date per
+    id will have a null value (consumed as-is by callers that call
+    ``drop_nulls`` afterwards).
+    """
+    sorted_ret = daily_returns.select("date", "id", "return").sort(["id", "date"])
+    return sorted_ret.with_columns(pl.col("return").shift(-1).over("id").alias("return_next_date"))
+
+
+def _max_relative_error(a: np.ndarray, b: np.ndarray, eps: float = 1e-8) -> float:
+    """Max element-wise relative error between two equal-length arrays."""
+    return float(np.max(np.abs(a - b) / (np.abs(b) + eps)))
+
+
+# --------------------------------------------------------------------------- #
 # Check 1: forward-return horizon
 # --------------------------------------------------------------------------- #
 
@@ -144,10 +166,7 @@ def _check_fwd_ret_horizon(
     # For h=1: fwd_ret_1[T] == return[T+1].
     # Build a shifted daily-return frame: for each (date, id) in forward_returns,
     # look up the return of the *next* date for that id.
-    sorted_ret = daily_returns.select("date", "id", "return").sort(["id", "date"])
-    next_ret = sorted_ret.with_columns(
-        pl.col("return").shift(-1).over("id").alias("return_next_date")
-    )
+    next_ret = _build_next_period_returns(daily_returns)
 
     # Merge with the non-null forward returns (trailing rows are null by design)
     fwd_clean = forward_returns.select("date", "id", target_col).drop_nulls()
@@ -159,10 +178,6 @@ def _check_fwd_ret_horizon(
             passed=False,
             detail="No overlapping rows between forward_returns and daily_returns after join.",
         )
-
-    # For h=1 the forward return is exactly the next-day return (percent-units match).
-    fwd_vals = merged[target_col].to_numpy()
-    ret_vals = merged["return_next_date"].drop_nulls().to_numpy()
 
     # After shifting, the last row per id has a null return_next_date; drop those.
     merged_clean = merged.drop_nulls(subset=["return_next_date"])
@@ -177,9 +192,7 @@ def _check_fwd_ret_horizon(
     ret_vals = merged_clean["return_next_date"].to_numpy()
 
     n = len(fwd_vals)
-    abs_diff = np.abs(fwd_vals - ret_vals)
-    scale = np.abs(ret_vals) + 1e-8
-    max_rel_err = float(np.max(abs_diff / scale))
+    max_rel_err = _max_relative_error(fwd_vals, ret_vals)
 
     if max_rel_err > rtol:
         return CheckResult(
@@ -250,12 +263,7 @@ def _check_feature_target_alignment(
         }
     )
 
-    # Build next-date return for each (date, id)
-    sorted_ret = daily_returns.select("date", "id", "return").sort(["id", "date"])
-    next_ret = sorted_ret.with_columns(
-        pl.col("return").shift(-1).over("id").alias("return_next_date")
-    )
-
+    next_ret = _build_next_period_returns(daily_returns)
     merged = panel_df.join(next_ret.select("date", "id", "return_next_date"), on=["date", "id"])
     merged_clean = merged.drop_nulls(subset=["return_next_date"])
 
@@ -270,18 +278,14 @@ def _check_feature_target_alignment(
     ret_vals = merged_clean["return_next_date"].to_numpy()
     n = len(y_vals)
 
-    abs_diff = np.abs(y_vals - ret_vals)
-    scale = np.abs(ret_vals) + 1e-8
-    max_rel_err = float(np.max(abs_diff / scale))
+    max_rel_err = _max_relative_error(y_vals, ret_vals)
 
     # Also verify the *wrong* alignment: y at date D should NOT match return at D
     same_ret = panel_df.join(daily_returns.select("date", "id", "return"), on=["date", "id"])
     if not same_ret.is_empty():
-        y_wrong = same_ret["y_panel"].to_numpy()
-        r_wrong = same_ret["return"].to_numpy()
-        abs_diff_wrong = np.abs(y_wrong - r_wrong)
-        scale_wrong = np.abs(r_wrong) + 1e-8
-        max_same_day_match = float(np.max(abs_diff_wrong / scale_wrong))
+        max_same_day_match = _max_relative_error(
+            same_ret["y_panel"].to_numpy(), same_ret["return"].to_numpy()
+        )
         same_day_looks_correct = max_same_day_match < 1e-6
     else:
         same_day_looks_correct = False
