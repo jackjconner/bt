@@ -84,6 +84,16 @@ DECISIONS.md, additive-API discipline):
 - **Work in your worktree** at `.worktrees/<component>-<slug>`, branch
   `improve/<component>-<slug>` off `main`. Isolated trees let parallel sub-agents
   build and run gates without colliding.
+- **Pin every command to your worktree.** Your shell cwd does **not** persist
+  between commands and defaults to the repo root, so a bare relative `Write` /
+  `Edit` / `vim component/x.py` lands in the **primary** checkout, not your
+  worktree — corrupting the main tree and risking a commit onto the wrong branch.
+  Either prefix every command with `cd .worktrees/<component>-<slug> &&`, or use
+  absolute paths under it. Before your first edit, confirm
+  `git rev-parse --show-toplevel` ends in `.worktrees/<component>-<slug>`.
+  `scripts/committer` **refuses** component-dir commits from the primary worktree
+  (exit 3), so a slipped commit fails loudly rather than landing on the trunk —
+  but don't rely on the net; pin the cwd.
 - **Commit atomically with `scripts/committer`** (never `git commit` directly,
   never bypass its ruff/ty gates) as you go.
 - **Stay in your lane.** Your PR touches only your component's directory + the

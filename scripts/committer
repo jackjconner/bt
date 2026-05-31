@@ -30,6 +30,32 @@ if git diff --cached --quiet; then
   exit 2
 fi
 
+# --- worker-isolation guard ----------------------------------------------------
+# Component code must be committed from its worktree (.worktrees/<component>-<slug>),
+# never the primary checkout.  A worker sub-agent whose shell cwd slipped to the
+# repo root (relative Write/Edit, non-persistent `cd`) would otherwise commit its
+# lane's changes onto whatever branch the primary worktree is on — corrupting the
+# trunk or an unrelated branch.  Refuse component-dir commits from the primary
+# worktree; ledgers / docs / tooling on the primary branch are unaffected.
+# Deliberate orchestrator-side component commit: BT_ALLOW_PRIMARY_COMPONENT_COMMIT=1.
+_git_dir="$(cd "$(git rev-parse --git-dir)" && pwd)"
+_common_dir="$(cd "$(git rev-parse --git-common-dir)" && pwd)"
+if [ "$_git_dir" = "$_common_dir" ] && [ "${BT_ALLOW_PRIMARY_COMPONENT_COMMIT:-0}" != "1" ]; then
+  _staged_top="$(git diff --cached --name-only | cut -d/ -f1 | sort -u)"
+  for _c in etl signals models analysis portfolio backtest profiling; do
+    if printf '%s\n' "$_staged_top" | grep -qx "$_c"; then
+      echo "committer: REFUSED — staged changes touch '$_c/' from the PRIMARY worktree." >&2
+      echo "  Component changes must be committed from your worktree:" >&2
+      echo "    .worktrees/<component>-<slug>  (branch improve/<…> or explore/<…>)" >&2
+      echo "  You are in $(git rev-parse --show-toplevel)" >&2
+      echo "  on '$(git symbolic-ref --short HEAD 2>/dev/null || echo DETACHED)'." >&2
+      echo "  cd into your worktree and re-run committer there (see component-improvement-loop)." >&2
+      echo "  Deliberate orchestrator commit? set BT_ALLOW_PRIMARY_COMPONENT_COMMIT=1." >&2
+      exit 3
+    fi
+  done
+fi
+
 echo "committer: ruff format --check"
 uv run ruff format --check
 echo "committer: ruff check"
