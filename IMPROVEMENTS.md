@@ -97,3 +97,10 @@ metric:   backtest p50 — median 41.21 → 33.27 ms (1.24×); 1.13–1.24× on 
 eval:     golden held — path-dependent fields byte-exact: gross_sharpe 8.88e-16, net_sharpe 3.22e-15, cost_drag 2.33e-10 (last-ULP float reassociation)
 PR:       #44
 note:     hoist softmax / constraints / weight-drift / portfolio-return out of the Python event loop into batched NumPy; only the NAV/cost recurrence stays scalar; incumbent loop retained for non-fast-path envelopes; +12 byte-identity tests. The resumed draft had a blocking object-ndarray→Date cast bug, fixed by returning plain lists through _assemble_result. Report: reports/round-005/backtest.md.
+
+## 2026-05-31 — etl: remove dead _adjust_single_asset path  [accepted]
+type:     consolidate
+metric:   −193 net lines (etl/adjust.py + test_adjust.py); golden byte-identical; no perf change (hot path untouched)
+eval:     byte-identical — direct branch-vs-main PipelineSummary diff "Files are identical"; post-merge pytest 1211 passed (−16 oracle/helper tests, +1 direct fixture test)
+PR:       #47
+note:     First consolidate round (the second half of two-phase add-then-consolidate). Round 005 vectorized adjust_prices but kept the per-asset loop as a test oracle under additive-only; with backwards-compat dropped (DECISIONS.md) it was dead code — no production caller. Scout cleared the other 4 round-005 shadows as genuinely live and left them: signals engine="matrix" is the non-rank IC backend, models "loop" is the non-ridge auto-dispatch fallback, backtest's scalar loop handles non-weight_space_eligible configs, analysis's scalar fns are still called by report.py. Equivalence test → direct fixture test (coverage preserved). Report: reports/round-006/etl.md.
