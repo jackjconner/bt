@@ -4,6 +4,11 @@ from dataclasses import dataclass
 
 import polars as pl
 
+# polars accepts either a DataType instance (``pl.Int64()``) or the class
+# itself (``pl.Int64``) wherever a dtype is expected; the schema declarations
+# use the class form, so the annotation must admit both.
+DataTypeLike = pl.DataType | type[pl.DataType]
+
 
 class SchemaError(ValueError):
     """Raised when a DataFrame violates its declared schema."""
@@ -12,7 +17,7 @@ class SchemaError(ValueError):
 @dataclass(frozen=True)
 class Column:
     name: str
-    dtype: pl.DataType
+    dtype: DataTypeLike
     nullable: bool = False
 
 
@@ -61,5 +66,5 @@ class Schema:
         return pl.DataFrame(schema={c.name: c.dtype for c in self.columns})
 
 
-def col(name: str, dtype: pl.DataType, nullable: bool = False) -> Column:
+def col(name: str, dtype: DataTypeLike, nullable: bool = False) -> Column:
     return Column(name=name, dtype=dtype, nullable=nullable)
