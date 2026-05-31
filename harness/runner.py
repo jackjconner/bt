@@ -14,6 +14,7 @@ profiling component ships.
 
 from __future__ import annotations
 
+import datetime
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -34,6 +35,7 @@ from profiling import (
 )
 
 from .components import build_components
+from .history import AgentAnnotation, AgentContext, write_history_run
 from .spec import BenchmarkContext, ComponentBenchmark
 
 
@@ -45,6 +47,7 @@ class HarnessReport:
     scaling_fits: list[ScalingFit]
     regression: RegressionReport | None = None
     grid: tuple[GenSpec, ...] = field(default_factory=tuple)
+    agent_ctx: AgentContext | None = None
 
 
 def _params(spec: GenSpec) -> dict[str, int]:
@@ -66,9 +69,13 @@ def run_harness(
     run_id: str = "harness",
     baselines: pl.DataFrame | None = None,
     thresholds: pl.DataFrame | None = None,
+    agent_ctx: AgentContext | None = None,
+    annotation: AgentAnnotation | None = None,
+    history_dir: Path | None = None,
 ) -> HarnessReport:
     components = components or build_components()
     store_dir.mkdir(parents=True, exist_ok=True)
+    run_ts = datetime.datetime.now()
     env = capture_environment(run_id, trials=n_trials, warmup_trials=warmup)
 
     stats: list[TrialResult] = []
@@ -105,6 +112,19 @@ def run_harness(
         )
         regression = check_regressions(current, baselines, thresholds)
 
+    if history_dir is not None and agent_ctx is not None:
+        write_history_run(
+            history_dir=history_dir,
+            run_id=env.run_id,
+            run_ts=run_ts,
+            git_sha=env.git_sha,
+            agent_ctx=agent_ctx,
+            stats=stats,
+            scaling_fits=fits,
+            regression=regression,
+            annotation=annotation,
+        )
+
     return HarnessReport(
         run_id=env.run_id,
         stats=stats,
@@ -112,6 +132,7 @@ def run_harness(
         scaling_fits=fits,
         regression=regression,
         grid=tuple(grid),
+        agent_ctx=agent_ctx,
     )
 
 
