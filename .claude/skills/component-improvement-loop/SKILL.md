@@ -35,9 +35,10 @@ mandate — and what "done" looks like — depends on the type:
 - **exploit** — the smallest change that wins the metric gate; small diffs review
   and revert cleanly. Behavior holds the golden within tolerance.
 - **refactor** — split a large/tangled function, add unit tests, **change no
-  behavior**: the golden must come back **byte-identical** (`evalgate
-  --tolerance 0`). You win on structure (length/complexity down, coverage up),
-  not speed — profiling need only show *no regression*.
+  behavior**: the golden must come back **byte-identical** (`scripts/gate
+  consolidate-check` — a direct vs-`main` diff; see the consolidate note below for
+  why this beats `eval --tolerance 0`). You win on structure (length/complexity
+  down, coverage up), not speed — profiling need only show *no regression*.
 - **feature** — add a new capability **additively, behind a flag/default**: a new
   function, a new `_protocol.py` method with a default, or a new
   `PipelineSummary` field. Existing numbers hold; any new fields are gated by
@@ -49,10 +50,15 @@ mandate — and what "done" looks like — depends on the type:
 - **consolidate** — **remove a superseded path.** A prior round added a
   replacement and kept the old impl as a shadow/oracle; delete the old
   implementation + its flag, make the replacement the sole path, and update every
-  call site. The golden must come back **byte-identical** (`scripts/gate eval
-  --tolerance 0`) — you are removing *dead* code, not changing behavior. Keep a
-  path only if it is still genuinely used (a real fallback) or is a test oracle a
-  test still references; say which in the PR.
+  call site. The golden must come back **byte-identical** — prove it with
+  `scripts/gate consolidate-check`, which diffs your tree against a *freshly
+  computed* `main` summary on this machine. Use this, **not** `eval --tolerance 0`:
+  the committed golden carries pre-existing ~1e-16 fp-noise (a BLAS/build artifact
+  present on clean `main` too), so `--tolerance 0` flags spuriously; a same-machine
+  vs-`main` diff cancels that noise and any remaining delta is real. You are
+  removing *dead* code, not changing behavior. Keep a path only if it is still
+  genuinely used (a real fallback) or is a test oracle a test still references; say
+  which in the PR.
 
 ## The gates (your PR must pass all of them — run and quote each)
 
@@ -66,7 +72,7 @@ for the timed run — so you never source diskguard or memorize an invocation.
 | **lint + types** | `scripts/gate lint` (ruff check + format --check + ty) | clean; warnings are errors, `error-on-warning`. No `# type: ignore` / suppression — fix or widen. Also enforced per commit by `scripts/committer`. |
 | **correctness / regression** | `scripts/gate test <component>/ tests/integration/` (or `scripts/gate test` for the full suite) | still green — same count, no new failures. The integration suite imports across components, so a broken contract fails *here*. |
 | **profiling** | `scripts/gate bench` (harness through the bench lock) + `check_regressions` vs the ratcheted baseline | per round type: **improved** (exploit), **no regression** (refactor / feature), or **improved-or-justified-tie** (explore). No other stage regresses past threshold. |
-| **evaluation** | `scripts/gate eval` → `PipelineSummary` vs the round's **golden** (add `--tolerance 0` for refactor/consolidate, `--allow-new-fields` for feature) | per type: holds within tolerance (exploit / explore), **byte-identical** (refactor / consolidate), or holds + **new fields** (feature). A genuine accuracy improvement is the one case a number *should* move — justify it. |
+| **evaluation** | `scripts/gate eval` → `PipelineSummary` vs the round's **golden** (`--allow-new-fields` for feature); for refactor/consolidate use `scripts/gate consolidate-check` (direct vs-`main` diff, cancels the golden's fp-noise) instead of `eval --tolerance 0` | per type: holds within tolerance (exploit / explore), **byte-identical** (refactor / consolidate), or holds + **new fields** (feature). A genuine accuracy improvement is the one case a number *should* move — justify it. |
 
 `scripts/gate all <component>` runs lint + test + eval in order for a fast check.
 
@@ -83,7 +89,7 @@ bt has **no external API consumers**, so backwards-compat is not a goal (see
 [[DECISIONS]], "no backwards-compat; two-phase add-then-consolidate"). You **may**
 remove or rename internal symbols, change signatures, and delete superseded paths
 — *provided you update every call site* and the **golden stays byte-identical**
-(`scripts/gate eval --tolerance 0`) with the integration suite green. Those two
+(`scripts/gate consolidate-check`) with the integration suite green. Those two
 are the guards that a removal didn't change behavior; the integration suite
 imports across the component boundary, so a broken cross-component contract fails
 there.

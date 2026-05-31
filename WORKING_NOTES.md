@@ -34,8 +34,12 @@ tests in models/.
   (the primary checkout) so a fresh worktree finds `.oversight/golden.json`
   without hand-copying it. cwd/TMPDIR stay pinned to the worktree; only the golden
   path resolves to primary. Verified from both primary and a throwaway worktree.
-- `consolidate-check` for `gate` (branch-vs-main PipelineSummary diff) still open
-  from round 006.
+- ~~`consolidate-check` for `gate`~~ **DONE:** `scripts/gate consolidate-check
+  [ref]` computes `ref`'s (default `main`) PipelineSummary fresh in an ephemeral
+  worktree and diffs the current tree against it exactly — same-machine runs cancel
+  the stored golden's ~1e-16 fp-noise. Wired into both loop skills as the
+  refactor/consolidate evaluation bar (replaces `eval --tolerance 0`). Smoke-tested
+  main-vs-main: every field `0.00e+00`.
 - `FEATURE_BACKLOG.md` still-queued: F-006 (portfolio EWMA factor-cov), F-008
   (backtest order types). Several flag-off capabilities now ship dormant
   (backtest short-gating; etl quality-flags; models fold-diagnostics) — a future

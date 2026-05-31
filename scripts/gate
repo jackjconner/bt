@@ -14,6 +14,11 @@
 #   scripts/gate eval [extra...]     # evalgate vs the round golden
 #                                    #   e.g. scripts/gate eval --tolerance 0
 #                                    #        scripts/gate eval --allow-new-fields
+#   scripts/gate consolidate-check [ref]   # the consolidate-round bar: diff THIS
+#                                    #   tree's PipelineSummary against a freshly
+#                                    #   computed `ref` (default main), exact. Use
+#                                    #   this, not `eval --tolerance 0`, to prove a
+#                                    #   removal changed nothing.
 #   scripts/gate bench [args...]     # harness through the bench lock (clean timings)
 #   scripts/gate all <component>     # lint, then test <component>/ + integration, then eval
 #
@@ -49,6 +54,26 @@ case "$_sub" in
     ;;
   eval)
     uv run python -m evalgate --golden "$GOLDEN" --field-tol backtest_p50_s=0.5 "$@"
+    ;;
+  consolidate-check)
+    # The right bar for a *consolidate* round (pure dead-code removal must move
+    # nothing). `eval --tolerance 0` is wrong here: the committed golden carries
+    # pre-existing ~1e-16 fp-noise (a BLAS/build artifact present on clean main
+    # too), so it flags spuriously. Instead compute `ref`'s summary FRESH in an
+    # ephemeral worktree and diff this tree against it exactly — both runs share
+    # this machine's BLAS, so the noise cancels and any remaining diff is real.
+    # Wall-clock timing (backtest_p50_s) is the one field that legitimately varies
+    # run-to-run, so it keeps a field-tol; every other field must be exact.
+    ref="${1:-main}"
+    _tmp="$(mktemp -d)"
+    _wt="$_tmp/ref-tree"
+    _ref_summary="$_tmp/ref_summary.json"
+    trap 'git worktree remove --force "$_wt" 2>/dev/null || true; rm -rf "$_tmp"' EXIT
+    echo "consolidate-check: computing '$ref' summary in an ephemeral worktree …"
+    git worktree add --quiet --detach "$_wt" "$ref"
+    ( cd "$_wt" && uv run python -m evalgate --save --golden "$_ref_summary" >/dev/null )
+    echo "consolidate-check: diffing current tree vs '$ref' (exact) …"
+    uv run python -m evalgate --golden "$_ref_summary" --tolerance 0 --field-tol backtest_p50_s=0.5
     ;;
   bench)
     scripts/bench uv run main.py "$@"
