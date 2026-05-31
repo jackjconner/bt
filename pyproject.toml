@@ -7,4 +7,25 @@ requires-python = ">=3.13"
 dependencies = [
     "numpy>=2.4.6",
     "polars>=1.41.2",
+    "scikit-learn>=1.6",
+    "scipy>=1.15",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+    "ruff>=0.15.15",
+    "ty>=0.0.40",
+]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "C4", "PIE", "RET", "RUF"]
+# RUF001/002/003 flag the intentional unicode math notation (Σ, ᵀ, ←, etc.) in
+# docstrings/strings as "ambiguous" — a domain false positive, not a defect.
+ignore = ["RUF001", "RUF002", "RUF003"]
+
+[tool.ty.terminal]
+error-on-warning = true

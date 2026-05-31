@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Atomic-commit wrapper for bt.
+#
+# Stages the given paths (or uses what's already staged), runs the fast
+# every-commit gates — ruff format, ruff lint, ty types — and commits only if
+# they pass. The three heavy gates of the component-improvement loop (pytest
+# correctness, profiling, evaluation) are run separately at change/PR time;
+# this script enforces the cheap gates so nothing unclean ever lands.
+#
+# Never bypasses hooks, never passes --no-verify. If a gate fails, fix the
+# underlying issue — do not suppress it.
+#
+# usage: scripts/committer "<type(scope): subject>" [path ...]
+set -euo pipefail
+
+if [ "$#" -lt 1 ]; then
+  echo "usage: scripts/committer \"<type(scope): subject>\" [path ...]" >&2
+  exit 2
+fi
+
+msg="$1"
+shift
+
+if [ "$#" -gt 0 ]; then
+  git add -- "$@"
+fi
+
+if git diff --cached --quiet; then
+  echo "committer: nothing staged to commit (pass paths or 'git add' first)" >&2
+  exit 2
+fi
+
+echo "committer: ruff format --check"
+uv run ruff format --check
+echo "committer: ruff check"
+uv run ruff check
+echo "committer: ty check"
+uv run ty check
+
+git commit -m "$msg"
