@@ -9,5 +9,10 @@ if TYPE_CHECKING:
 
 
 class FinancialModel(Protocol):
-    def fit(self, X: np.ndarray, y: np.ndarray) -> ModelResult: ...
+    def fit(
+        self,
+        X: np.ndarray,
+        y: np.ndarray,
+        sample_weight: np.ndarray | None = None,
+    ) -> ModelResult: ...
     def predict(self, X: np.ndarray) -> np.ndarray: ...

@@ -27,17 +27,27 @@ class RidgeModel:
         self.config = config
         self._model: Ridge | None = None
 
-    def fit(self, X: np.ndarray, y: np.ndarray) -> ModelResult:
+    def fit(
+        self,
+        X: np.ndarray,
+        y: np.ndarray,
+        sample_weight: np.ndarray | None = None,
+    ) -> ModelResult:
         """Closed-form ridge. CPU is O(n_samples * n_features^2); the Gram
         matrix path costs O(n_features^2) memory when n_features > n_samples.
+        ``sample_weight`` is forwarded to sklearn's Ridge so recency/vol/
+        liquidity weighting can be applied without subclassing.
         """
         model = Ridge(alpha=self.config.alpha)
-        model.fit(X, y)
+        if sample_weight is not None:
+            model.fit(X, y, sample_weight=sample_weight)
+        else:
+            model.fit(X, y)
         self._model = model
         return ModelResult(
             coef=model.coef_,
             intercept=float(model.intercept_),
-            train_r2=float(model.score(X, y)),
+            train_r2=float(model.score(X, y, sample_weight=sample_weight)),
         )
 
     def predict(self, X: np.ndarray) -> np.ndarray:
