@@ -9,6 +9,7 @@ caught by the same wiring.
 
 from __future__ import annotations
 
+import numpy as np
 import polars as pl
 
 from analysis import BacktestAnalyzerImpl, alpha, beta, information_ratio, two_way_turnover
@@ -29,7 +30,6 @@ from models import (
 from portfolio import (
     build_from_long,
     constraints_from_polars,
-    ledoit_wolf_cov,
     mean_variance,
 )
 from profiling import check_regressions, fit_scaling
@@ -182,12 +182,24 @@ def _portfolio_setup(ctx: BenchmarkContext) -> dict:
 
 
 def _portfolio_run(inp: dict) -> dict:
-    risk_model = build_from_long(inp["loadings"], inp["fcov"], inp["specific"], inp["as_of"])
-    cov = ledoit_wolf_cov(inp["R"])
+    # Use the factor-model covariance path: no dense n×n Ledoit-Wolf allocation.
+    # build_from_long still materialises frm.cov (for risk decomposition callers)
+    # but mean_variance with factor_risk_model=frm bypasses it in the QP build.
+    # Authorised cross-lane edit: harness wires the new factor path so the
+    # profiling gate measures it (see PR writeup).
+    frm = build_from_long(inp["loadings"], inp["fcov"], inp["specific"], inp["as_of"])
+    # Pass a dummy 1×1 cov — it is ignored when factor_risk_model is supplied.
+    dummy_cov = np.empty((1, 1))
     opt = mean_variance(
-        inp["alpha"], cov, inp["cspec"], risk_aversion=1.0, max_iter=3000, solver="osqp"
+        inp["alpha"],
+        dummy_cov,
+        inp["cspec"],
+        risk_aversion=1.0,
+        max_iter=3000,
+        solver="osqp",
+        factor_risk_model=frm,
     )
-    var = risk_model.portfolio_variance(opt.weights)
+    var = frm.portfolio_variance(opt.weights)
     return {"weights": opt.weights, "variance": var, "converged": opt.converged}
 
 

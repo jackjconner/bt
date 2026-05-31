@@ -51,6 +51,29 @@ treated as a feasible solution during a pre-check; only assets outside the
 band enter the cost penalty. This models the common "don't trade small drifts"
 rebalance rule. The full optimization still runs; the band widens via the cost
 penalty.
+
+Factor-model covariance path (``factor_risk_model`` parameter, ``solver="osqp"`` only)
+    When a ``FactorRiskModel`` is supplied the optimizer does NOT materialise the
+    dense n×n covariance Σ = B·F·Bᵀ + D.  Instead it introduces k auxiliary
+    variables y = Bᵀw and builds a structure-exploiting QP with a block-diagonal
+    cost matrix.
+
+    Decision variable: x = [w (n), t (n), y (k)], length N = 2n + k.
+
+    P (upper-triangular CSC, O(n + k²) nonzeros):
+        P[0:n, 0:n]     = 2λ diag(specific_var)   — diagonal, n entries
+        P[2n:2n+k, 2n:2n+k] = 2λ F               — dense k×k factor cov
+
+    q:
+        q[0:n]    = -alpha
+        q[n:2n]   = cost_scale * cp
+        q[2n:2n+k] = 0
+
+    Extra constraints (k rows appended after existing rows):
+        y - Bᵀw = 0  →  [-Bᵀ | 0_n | I_k] · x = 0   (l = u = 0)
+
+    Memory: O(n·k + k²) for B and F vs O(n²) for dense Σ.
+    Time: OSQP convergence on sparse P is near-linear in n (empirically).
 """
 
 from __future__ import annotations
@@ -63,6 +86,7 @@ import scipy.sparse as sp
 from scipy.optimize import minimize
 
 from .constraints import ConstraintSpec
+from .risk_model import FactorRiskModel
 
 
 @dataclass(frozen=True)
@@ -99,12 +123,16 @@ def mean_variance(
     no_trade_band: float = 0.0,
     max_iter: int = 500,
     solver: Literal["slsqp", "osqp"] = "slsqp",
+    factor_risk_model: FactorRiskModel | None = None,
 ) -> OptimizeResult:
     """Solve the mean-variance allocation problem.
 
     Args:
         alpha:        (n_assets,) expected return / alpha vector.
-        cov:          (n_assets, n_assets) asset covariance matrix.
+        cov:          (n_assets, n_assets) asset covariance matrix.  Ignored
+                      when ``factor_risk_model`` is supplied and
+                      ``solver="osqp"`` — the dense Σ is never materialised in
+                      that path.
         spec:         Constraint specification (bounds + linear constraints).
         risk_aversion: λ — scales the variance penalty relative to alpha.
         w0:           (n_assets,) current weights (default: equal-weight).
@@ -118,6 +146,11 @@ def mean_variance(
         solver:       Backend to use. ``"slsqp"`` (default): scipy SLSQP.
                       ``"osqp"``: OSQP QP solver with epigraph L1 reformulation.
                       OSQP is typically 10–50× faster for n_assets ≥ 100.
+        factor_risk_model: Optional ``FactorRiskModel`` (B, F, D).  When
+                      provided *and* ``solver="osqp"``, the optimizer builds a
+                      structure-exploiting sparse QP without materialising the
+                      dense n×n covariance — see module docstring.  The dense
+                      ``cov`` argument is unused in this path.
 
     Returns:
         OptimizeResult with the optimal weights and solver metadata.
@@ -131,6 +164,18 @@ def mean_variance(
     cp = np.asarray(cost_per_unit, dtype=float)
 
     if solver == "osqp":
+        if factor_risk_model is not None:
+            return _solve_osqp_factor(
+                alpha,
+                factor_risk_model,
+                spec,
+                risk_aversion,
+                w0,
+                cp,
+                cost_scale,
+                no_trade_band,
+                max_iter,
+            )
         return _solve_osqp(
             alpha, cov, spec, risk_aversion, w0, cp, cost_scale, no_trade_band, max_iter
         )
@@ -522,6 +567,195 @@ def _solve_osqp(
     obj = _osqp_objective(
         weights, alpha, cov_arr, risk_aversion, w0_arr, cp, cost_scale, no_trade_band
     )
+
+    return OptimizeResult(
+        weights=weights,
+        converged=converged,
+        message=status,
+        obj_value=obj,
+        n_iter=int(res.info.iter),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Factor-model covariance path — structure-exploiting sparse QP
+# ---------------------------------------------------------------------------
+#
+# Decision variable: x = [w (n), t (n), y (k)], length N = 2n + k.
+#
+# The risk term wᵀΣw = wᵀDw + yᵀFy  where y = Bᵀw,  D = diag(specific_var).
+#
+# P (upper-triangular, O(n + k²) nonzeros):
+#   P[0:n, 0:n]         = 2λ diag(specific_var)   (diagonal block)
+#   P[2n:2n+k, 2n:2n+k] = 2λ F                    (dense k×k factor cov)
+#   (P[n:2n, *] = 0 — the t variables are linear-only)
+#
+# q: [-alpha | cost_scale*cp | 0_k]
+#
+# Constraints: existing [w; t] rows widened by k zero columns for y,
+#   plus k equality rows  y − Bᵀw = 0  →  [-Bᵀ | 0_n | I_k] x = 0.
+
+
+def _build_quadratic_cost_factor(
+    n: int,
+    k: int,
+    risk_aversion: float,
+    specific_var: np.ndarray,
+    factor_cov: np.ndarray,
+    alpha: np.ndarray,
+    cp: np.ndarray,
+    cost_scale: float,
+) -> tuple[sp.csc_matrix, np.ndarray]:
+    """Build the structured P (sparse) and q for the factor-model QP.
+
+    Decision variable x = [w (n), t (n), y (k)], length N = 2n + k.
+
+    P is upper-triangular CSC with O(n + k²) nonzeros:
+        P[0:n, 0:n]         = 2λ diag(specific_var)
+        P[2n:2n+k, 2n:2n+k] = 2λ factor_cov  (upper triangle taken below)
+    """
+    N = 2 * n + k
+    lam2 = 2.0 * risk_aversion
+
+    # w-block: diagonal specific-variance term
+    diag_vals = lam2 * np.asarray(specific_var, dtype=float)
+    P_w = sp.diags(diag_vals, format="csc", shape=(n, n))  # already upper-tri (diagonal)
+
+    # t-block: zero (n×n)
+    P_t = sp.csc_matrix((n, n))
+
+    # y-block: 2λ * factor_cov (take upper triangle for OSQP)
+    P_y_dense = lam2 * np.asarray(factor_cov, dtype=float)
+    P_y = sp.triu(P_y_dense, format="csc")
+
+    # Assemble block-diagonal P_wt and P_y, then the full N×N matrix.
+    # scipy.sparse.block_diag gives exactly a block-diagonal CSC.
+    P = sp.block_diag([P_w, P_t, P_y], format="csc")
+    # Enforce upper-triangular (block_diag + diag are already upper-tri, but
+    # be explicit so OSQP's precondition check can't fail on floating-point issues).
+    P = sp.triu(P, format="csc")
+
+    q = np.zeros(N)
+    q[:n] = -np.asarray(alpha, dtype=float)
+    if cost_scale > 0.0:
+        q[n : 2 * n] = cost_scale * np.asarray(cp, dtype=float)
+    # q[2n:] stays zero (y variables have no linear cost term)
+
+    return P, q
+
+
+def _build_constraint_matrix_factor(
+    spec: ConstraintSpec,
+    n: int,
+    k: int,
+    cost_scale: float,
+    w0_arr: np.ndarray,
+    no_trade_band: float,
+    B: np.ndarray,
+) -> tuple[sp.csc_matrix, np.ndarray, np.ndarray]:
+    """Assemble the OSQP constraint matrix for the factor-model QP.
+
+    Extends the dense-cov constraint matrix (which lives in the [w; t] block
+    of width 2n) by appending k zero columns for the y variables, then adds k
+    equality rows encoding y − Bᵀw = 0.
+
+    Row layout identical to _build_constraint_matrix for the first block, then:
+        [existing rows: per-asset bounds, net-exposure, epigraph, sector, gross]
+        k rows: -Bᵀ w + I_k y = 0    (y = Bᵀw)
+    """
+    # --- reuse the existing constraint builder for the [w; t] sub-problem ---
+    A_wt, l_wt, u_wt = _build_constraint_matrix(spec, n, cost_scale, w0_arr, no_trade_band)
+    # A_wt is (m × 2n); widen it to (m × (2n+k)) by appending zero y-columns.
+    m = A_wt.shape[0]
+    A_wt_wide = sp.hstack([A_wt, sp.csr_matrix((m, k))], format="csr")
+
+    # --- k rows: y_j − (Bᵀw)_j = 0  for j = 0..k-1 ---
+    # Bᵀ is (k × n), so the w part of each row is -Bᵀ[j, :] (1 × n).
+    # The t part is 0 (1 × n).
+    # The y part is e_j (standard basis, 1 × k).
+    B_arr = np.asarray(B, dtype=float)  # (n, k)
+    Bt = B_arr.T  # (k, n)
+    neg_Bt = sp.csr_matrix(-Bt)  # (k, n)
+    zero_t_block = sp.csr_matrix((k, n))
+    eye_y = sp.eye(k, format="csr")
+    A_y_eq = sp.hstack([neg_Bt, zero_t_block, eye_y], format="csr")  # (k, 2n+k)
+
+    A = sp.vstack([A_wt_wide, A_y_eq]).tocsc()
+    l_vec = np.concatenate([l_wt, np.zeros(k)])
+    u_vec = np.concatenate([u_wt, np.zeros(k)])
+
+    return A, l_vec, u_vec
+
+
+def _solve_osqp_factor(
+    alpha: np.ndarray,
+    frm: FactorRiskModel,
+    spec: ConstraintSpec,
+    risk_aversion: float,
+    w0: np.ndarray,
+    cp: np.ndarray,
+    cost_scale: float,
+    no_trade_band: float,
+    max_iter: int,
+) -> OptimizeResult:
+    """Solve via OSQP using the structure-exploiting factor-model QP.
+
+    Decision variable x = [w (n), t (n), y (k)], length N = 2n + k.
+
+    P (upper-triangular CSC, O(n + k²) nonzeros):
+        P[0:n, 0:n]         = 2λ diag(specific_var)
+        P[2n:2n+k, 2n:2n+k] = 2λ factor_cov
+
+    Constraints A·x ∈ [l, u]:
+        first block : per-asset bounds, net-exposure, epigraph, sector, gross
+                      (same as dense-cov OSQP path; y columns are zero)
+        last k rows : y − Bᵀw = 0  (factor-exposure equality)
+    """
+    import osqp
+
+    n = spec.n_assets
+    k = frm.B.shape[1]
+    w0_arr = np.asarray(w0, dtype=float)
+
+    P, q = _build_quadratic_cost_factor(
+        n, k, risk_aversion, frm.specific_var, frm.factor_cov, alpha, cp, cost_scale
+    )
+    A, l_vec, u_vec = _build_constraint_matrix_factor(
+        spec, n, k, cost_scale, w0_arr, no_trade_band, frm.B
+    )
+
+    prob = osqp.OSQP()
+    prob.setup(
+        P,
+        q,
+        A,
+        l_vec,
+        u_vec,
+        warm_starting=True,
+        verbose=False,
+        max_iter=max_iter * 20,
+        eps_abs=1e-8,
+        eps_rel=1e-8,
+        eps_prim_inf=1e-8,
+        eps_dual_inf=1e-8,
+    )
+    res = prob.solve()
+
+    status = res.info.status
+    converged = status in ("solved", "solved_inaccurate")
+    weights = res.x[:n] if res.x is not None else np.zeros(n)
+
+    # Compute objective using the factor risk model (structure-preserving; no dense Σw)
+    var_val = frm.portfolio_variance(weights)
+    alpha_ret = float(np.asarray(alpha, dtype=float) @ weights)
+    if cost_scale > 0.0:
+        delta = np.abs(weights - w0_arr)
+        if no_trade_band > 0.0:
+            delta = np.maximum(delta - no_trade_band, 0.0)
+        cost_val = cost_scale * float(cp @ delta)
+    else:
+        cost_val = 0.0
+    obj = alpha_ret - risk_aversion * var_val - cost_val
 
     return OptimizeResult(
         weights=weights,
