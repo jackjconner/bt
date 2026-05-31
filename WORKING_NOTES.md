@@ -25,7 +25,8 @@ tests in models/.
   the pipeline derives returns from the price panel to stay session-aligned.
   Could migrate `generate_returns` to `session_axis` (DECISIONS.md cross-cut).
 - Infra-only plan items not built (out of code scope): flamegraphs/py-spy,
-  HTML tear sheets, CI gating wiring.
+  HTML tear sheets. (CI gating now wired: `.github/workflows/ci.yml` runs
+  pytest + ruff + ty on PRs and push to `main`.)
 
 ## Recent decisions (and why)
 - Synthetic generators + schema registry live under `etl/` (that's where

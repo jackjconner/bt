@@ -67,7 +67,10 @@ ratchets, records, and dispatches the docs update.
 
 Lint and types are *continuous* — `scripts/committer` runs them on every atomic
 commit, so a PR is lint/type-clean by construction. Correctness, profiling, and
-evaluation are the per-change gates the head agent adjudicates.
+evaluation are the per-change gates the head agent adjudicates. CI
+(`.github/workflows/ci.yml`) re-runs pytest + ruff + ty on every PR and on push
+to `main`, so the correctness gate is enforced in the pipeline, not just by
+local convention.
 
 The evaluation gate is the subtle one: a refactor can keep the API and pass
 every unit test yet *silently move the numbers*. A speedup that changes the
