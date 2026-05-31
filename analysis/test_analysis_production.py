@@ -14,6 +14,7 @@ import polars as pl
 import pytest
 
 from etl.datasets import GenSpec, generate
+from etl.source import to_float
 
 # ---------------------------------------------------------------------------
 # Fixtures / helpers
@@ -77,7 +78,7 @@ class TestCAGR:
         nav_vals = 100.0 * np.cumprod(1.0 + r)
         nav = _nav(nav_vals.tolist())
         rets = _returns(r.tolist())
-        arith = float(rets["return_1d"].mean()) * 252
+        arith = to_float(rets["return_1d"].mean()) * 252
         geo = cagr(nav)
         assert geo <= arith + 1e-9
 
@@ -149,7 +150,7 @@ class TestSortino:
         s = sharpe(rets)
         so = sortino(rets)
         # Positive mean required for comparison to be meaningful
-        assert float(pl.Series(r).mean()) > 0
+        assert to_float(pl.Series(r).mean()) > 0
         # Downside vol > total vol when losses are fat → Sortino < Sharpe
         assert so < s
 

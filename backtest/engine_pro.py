@@ -38,7 +38,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import date
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import numpy as np
 import polars as pl
@@ -528,9 +528,9 @@ def _execute_rebalance(
             tc_cost = compute_transaction_costs(
                 trade_value,
                 comm_mat[t],
-                spread_mat[t],
-                fee_mat[t],
-                mincomm_mat[t],
+                cast("np.ndarray", spread_mat)[t],
+                cast("np.ndarray", fee_mat)[t],
+                cast("np.ndarray", mincomm_mat)[t],
             )
         if cfg.enable_slippage:
             slip_cost = compute_slippage(trade_value, adv_t, impact_t)
@@ -566,9 +566,9 @@ def _execute_rebalance(
             tc_cost = compute_transaction_costs(
                 trade_value,
                 comm_mat[t],
-                spread_mat[t],
-                fee_mat[t],
-                mincomm_mat[t],
+                cast("np.ndarray", spread_mat)[t],
+                cast("np.ndarray", fee_mat)[t],
+                cast("np.ndarray", mincomm_mat)[t],
             )
         if cfg.enable_slippage:
             slip_cost = compute_slippage(trade_value, adv_t, impact_t)

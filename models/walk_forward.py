@@ -32,7 +32,7 @@ Public API
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 from sklearn.preprocessing import StandardScaler
@@ -73,12 +73,12 @@ class FoldScaler:
     @property
     def mean_(self) -> np.ndarray:
         assert self._scaler is not None
-        return self._scaler.mean_
+        return cast(np.ndarray, self._scaler.mean_)
 
     @property
     def scale_(self) -> np.ndarray:
         assert self._scaler is not None
-        return self._scaler.scale_
+        return cast(np.ndarray, self._scaler.scale_)
 
 
 # --------------------------------------------------------------------------- #

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 import polars as pl
 
@@ -23,7 +25,7 @@ def _make_features(
     rows = []
     for d in dates:
         for aid in range(n_assets):
-            row = {"date": d, "id": aid}
+            row: dict[str, Any] = {"date": d, "id": aid}
             for f in range(n_features):
                 row[f"feat_{f}"] = float(rng.normal())
             rows.append(row)

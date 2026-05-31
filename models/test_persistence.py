@@ -5,6 +5,7 @@ from __future__ import annotations
 import tempfile
 from datetime import date
 from pathlib import Path
+from typing import cast
 
 import numpy as np
 
@@ -61,8 +62,8 @@ class TestSaveLoadArtifact:
         artifact = artifact_from_fold(
             result,
             feature_names=tuple(f"f{i}" for i in range(5)),
-            scaler_mean=scaler.mean_,
-            scaler_scale=scaler.scale_,
+            scaler_mean=cast(np.ndarray, scaler.mean_),
+            scaler_scale=cast(np.ndarray, scaler.scale_),
             alpha=1.0,
             model_type="RidgeModel",
         )
@@ -70,8 +71,12 @@ class TestSaveLoadArtifact:
             base = Path(tmpdir) / "model"
             save_artifact(artifact, base)
             loaded = load_artifact(base)
-        np.testing.assert_array_almost_equal(loaded.scaler_mean, scaler.mean_)
-        np.testing.assert_array_almost_equal(loaded.scaler_scale, scaler.scale_)
+        np.testing.assert_array_almost_equal(
+            cast(np.ndarray, loaded.scaler_mean), cast(np.ndarray, scaler.mean_)
+        )
+        np.testing.assert_array_almost_equal(
+            cast(np.ndarray, loaded.scaler_scale), cast(np.ndarray, scaler.scale_)
+        )
 
     def test_round_trip_metadata(self):
         result, _, _ = _fit_ridge()
@@ -162,8 +167,8 @@ class TestPredictFromArtifact:
         artifact_scaled = artifact_from_fold(
             result,
             feature_names=tuple(f"f{i}" for i in range(5)),
-            scaler_mean=scaler.mean_,
-            scaler_scale=scaler.scale_,
+            scaler_mean=cast(np.ndarray, scaler.mean_),
+            scaler_scale=cast(np.ndarray, scaler.scale_),
         )
         artifact_raw = artifact_from_fold(result, feature_names=tuple(f"f{i}" for i in range(5)))
         p_scaled = predict_from_artifact(artifact_scaled, X)

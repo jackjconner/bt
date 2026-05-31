@@ -12,6 +12,7 @@ import math
 
 import polars as pl
 
+from etl.source import to_float
 from models import (
     ModelConfig,
     RidgeModel,
@@ -31,11 +32,11 @@ def test_signal_panel_has_recoverable_ic(synth) -> None:
     )
     fwd = loader.load("forward_returns")
     ic = ic_series_v2(momentum, fwd, return_col="fwd_ret_1")
-    assert ic["ic"].mean() > 0.0
+    assert to_float(ic["ic"].mean()) > 0.0
 
     neutral = neutralize_sector(momentum, loader.load("security_master"))
     ic_n = ic_series_v2(neutral, fwd, return_col="fwd_ret_1")
-    assert abs(ic_n["ic"].mean()) < 1.0
+    assert abs(to_float(ic_n["ic"].mean())) < 1.0
 
     curve = ic_horizon_curve(
         momentum, fwd, {1: "fwd_ret_1", 5: "fwd_ret_5", 21: "fwd_ret_21", 63: "fwd_ret_63"}

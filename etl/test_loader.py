@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import cast
+
 import polars as pl
 import pytest
 
@@ -81,7 +83,7 @@ def test_scan_returns_lazy_frame(data_dir):
     loader = DatasetLoader(data_dir, SPEC)
     lf = loader.scan("prices")
     assert isinstance(lf, pl.LazyFrame)
-    df = lf.collect()
+    df = cast(pl.DataFrame, lf.collect())
     assert df.height == SPEC.n_assets * SPEC.n_dates
 
 
@@ -91,7 +93,7 @@ def test_scan_with_date_and_id_filter(data_dir):
     all_dates = sorted(df_all["date"].unique().to_list())
     cut = all_dates[5]
     lf = loader.scan("prices", end=cut, ids=[0, 1])
-    df = lf.collect()
+    df = cast(pl.DataFrame, lf.collect())
     assert df["date"].max() <= cut
     assert set(df["id"].unique().to_list()).issubset({0, 1})
 

@@ -30,7 +30,7 @@ import pickle
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, overload
 
 import numpy as np
 
@@ -98,12 +98,15 @@ def save_artifact(artifact: ModelArtifact, base: Path) -> None:
     base = Path(base)
     base.parent.mkdir(parents=True, exist_ok=True)
 
-    arrays: dict[str, np.ndarray] = {"coef": artifact.coef}
-    if artifact.scaler_mean is not None:
-        arrays["scaler_mean"] = artifact.scaler_mean
-    if artifact.scaler_scale is not None:
-        arrays["scaler_scale"] = artifact.scaler_scale
-    np.savez_compressed(_arrays_path(base), **arrays)
+    if artifact.scaler_mean is not None and artifact.scaler_scale is not None:
+        np.savez_compressed(
+            _arrays_path(base),
+            coef=artifact.coef,
+            scaler_mean=artifact.scaler_mean,
+            scaler_scale=artifact.scaler_scale,
+        )
+    else:
+        np.savez_compressed(_arrays_path(base), coef=artifact.coef)
 
     meta = {
         "intercept": artifact.intercept,
@@ -143,6 +146,24 @@ def load_artifact(base: Path) -> ModelArtifact:
         model_type=meta["model_type"],
         extra=meta["extra"],
     )
+
+
+@overload
+def predict_from_artifact(
+    artifact: ModelArtifact,
+    X: np.ndarray,
+    *,
+    return_mask: Literal[False] = ...,
+) -> np.ndarray: ...
+
+
+@overload
+def predict_from_artifact(
+    artifact: ModelArtifact,
+    X: np.ndarray,
+    *,
+    return_mask: Literal[True],
+) -> tuple[np.ndarray, np.ndarray]: ...
 
 
 def predict_from_artifact(

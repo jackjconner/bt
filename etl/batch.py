@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
 import polars as pl
 
@@ -28,4 +29,4 @@ class BatchLoader:
         return pl.scan_parquet(self.config.source_path)
 
     def load(self) -> pl.DataFrame:
-        return self.as_lazy().collect(engine="in-memory")
+        return cast(pl.DataFrame, self.as_lazy().collect(engine="in-memory"))

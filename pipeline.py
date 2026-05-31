@@ -10,7 +10,9 @@ parameterized scaling experiment in ``main.py`` is kept separate.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
+from typing import cast
 
 import numpy as np
 import polars as pl
@@ -19,6 +21,7 @@ from analysis import BacktestAnalyzerImpl, sharpe
 from backtest import ProductionBacktestConfig, ProductionBacktestEngine, SignalFrame
 from etl import DatasetLoader, to_matrix
 from etl.datasets import GenSpec, write_all
+from etl.source import to_float
 from models import (
     ModelConfig,
     RidgeModel,
@@ -88,9 +91,9 @@ def run_production_pipeline(spec: GenSpec, workdir: Path) -> PipelineSummary:
     )
 
     # --- signals: IC, neutralization, horizon decay ---------------------- #
-    ic_raw = float(ic_series_v2(momentum, fwd, return_col="fwd_ret_1")["ic"].mean())
+    ic_raw = to_float(ic_series_v2(momentum, fwd, return_col="fwd_ret_1")["ic"].mean())
     neutral = neutralize_sector(momentum, sec_master)
-    ic_neut = float(ic_series_v2(neutral, fwd, return_col="fwd_ret_1")["ic"].mean())
+    ic_neut = to_float(ic_series_v2(neutral, fwd, return_col="fwd_ret_1")["ic"].mean())
     curve = ic_horizon_curve(
         momentum,
         fwd,
@@ -112,7 +115,7 @@ def run_production_pipeline(spec: GenSpec, workdir: Path) -> PipelineSummary:
     )
 
     # --- portfolio: factor risk model + mean-variance optimize ----------- #
-    as_of = prices["date"].max()
+    as_of = cast(date, prices["date"].max())
     risk_model = build_from_long(
         loader.load("factor_loadings"),
         loader.load("factor_covariance"),
@@ -152,9 +155,12 @@ def run_production_pipeline(spec: GenSpec, workdir: Path) -> PipelineSummary:
         enable_slippage=True,
         max_weight=0.1,
     )
-    engine_kwargs = {"prices": prices, "transaction_costs": tcosts, "universe_mask": umask}
-    gross = ProductionBacktestEngine(gross_cfg).run(returns, signals, **engine_kwargs)
-    net = ProductionBacktestEngine(net_cfg).run(returns, signals, **engine_kwargs)
+    gross = ProductionBacktestEngine(gross_cfg).run(
+        returns, signals, prices=prices, transaction_costs=tcosts, universe_mask=umask
+    )
+    net = ProductionBacktestEngine(net_cfg).run(
+        returns, signals, prices=prices, transaction_costs=tcosts, universe_mask=umask
+    )
 
     analyzer = BacktestAnalyzerImpl()
     gross_a = analyzer.analyze(gross)
@@ -167,7 +173,9 @@ def run_production_pipeline(spec: GenSpec, workdir: Path) -> PipelineSummary:
     capture_environment("pipeline_run", trials=3, warmup_trials=1)
     trial = run_trials(
         "backtest",
-        lambda: ProductionBacktestEngine(net_cfg).run(returns, signals, **engine_kwargs),
+        lambda: ProductionBacktestEngine(net_cfg).run(
+            returns, signals, prices=prices, transaction_costs=tcosts, universe_mask=umask
+        ),
         lambda r: {"nav": r.nav_history},
         n_trials=3,
         warmup=1,

@@ -58,7 +58,7 @@ def test_rolling_ic_ir_nan_at_start():
     ic_df = _ic_df()
     result = rolling_ic_ir(ic_df, window=20)
     # First (window-1) values should be NaN due to insufficient history
-    n_nan = result["rolling_ic"].is_nan().sum() + result["rolling_ic"].is_null().sum()
+    n_nan = int(result["rolling_ic"].is_nan().sum()) + int(result["rolling_ic"].is_null().sum())
     assert n_nan >= 19  # window=20 → first 19 rows are NaN
 
 

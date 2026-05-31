@@ -25,8 +25,13 @@ callers. Using numpy throughout avoids repeated DataFrame allocations.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date
+from typing import TYPE_CHECKING
 
 import numpy as np
+
+if TYPE_CHECKING:
+    import polars as pl
 
 
 @dataclass(frozen=True)
@@ -106,10 +111,10 @@ class FactorRiskModel:
 
 
 def build_from_long(
-    factor_loadings: object,  # pl.DataFrame (date, id, factor_id, loading)
-    factor_covariance: object,  # pl.DataFrame (date, factor_i, factor_j, cov)
-    specific_risk: object,  # pl.DataFrame (date, id, specific_var)
-    as_of_date: object,  # date
+    factor_loadings: pl.DataFrame,  # (date, id, factor_id, loading)
+    factor_covariance: pl.DataFrame,  # (date, factor_i, factor_j, cov)
+    specific_risk: pl.DataFrame,  # (date, id, specific_var)
+    as_of_date: date,
 ) -> FactorRiskModel:
     """Extract a single-date FactorRiskModel from long-format Polars frames.
 

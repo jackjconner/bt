@@ -8,7 +8,7 @@ import polars as pl
 from scipy import stats
 
 from backtest.signals import SignalFrame
-from etl.source import to_matrix
+from etl.source import to_float, to_matrix
 
 from .coverage import apply_min_coverage, pairwise_mask
 from .newey_west import newey_west_tstat
@@ -62,8 +62,8 @@ class ICEvaluator:
     def evaluate(self, signals: SignalFrame, returns: pl.DataFrame) -> ICResult:
         ic = ic_series(signals, returns)
         s = ic["ic"]
-        mean_ic = float(s.mean())
-        std_ic = float(s.std() or 0.0)
+        mean_ic = to_float(s.mean())
+        std_ic = to_float(s.std() or 0.0)
         return ICResult(
             ic_series=ic,
             mean_ic=mean_ic,

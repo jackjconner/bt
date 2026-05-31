@@ -4,6 +4,7 @@ sample weighting, and IC scoring."""
 from __future__ import annotations
 
 from datetime import date, timedelta
+from typing import Any
 
 import numpy as np
 import polars as pl
@@ -36,7 +37,7 @@ def _synthetic_panel(n_dates: int = 60, n_assets: int = 10, n_features: int = 5,
         X_cross = rng.normal(0.0, 1.0, (n_assets, n_features))
         y_cross = X_cross @ beta + rng.normal(0.0, 0.5, n_assets)
         for i, aid in enumerate(ids):
-            row_f = {"date": d, "id": aid}
+            row_f: dict[str, Any] = {"date": d, "id": aid}
             for f in range(n_features):
                 row_f[f"feat_{f}"] = float(X_cross[i, f])
             rows_feat.append(row_f)

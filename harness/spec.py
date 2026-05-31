@@ -34,12 +34,17 @@ class BenchmarkContext:
     workdir: Path
 
 
+# ``Inp`` is the type produced by ``setup`` and consumed by ``run``; ``Out`` is
+# the type ``run`` produces and ``frames`` consumes. Making the benchmark
+# generic over both lets each instance's setup -> run -> frames chain
+# type-check against its own concrete data structures instead of collapsing to
+# ``object``.
 @dataclass(frozen=True)
-class ComponentBenchmark:
+class ComponentBenchmark[Inp, Out]:
     name: str
-    setup: Callable[[BenchmarkContext], object]
-    run: Callable[[object], object]
-    frames: Callable[[object], dict[str, object]]
+    setup: Callable[[BenchmarkContext], Inp]
+    run: Callable[[Inp], Out]
+    frames: Callable[[Out], dict[str, object]]
 
 
 def no_frames(_: object) -> dict[str, object]:

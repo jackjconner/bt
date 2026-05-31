@@ -64,7 +64,7 @@ def _long_to_matrix(
     # Find common dates and ids across all signal frames
     all_dates: list[set] = []
     all_ids: list[set] = []
-    mats: list[tuple[np.ndarray, list]] = []
+    mats: list[tuple[np.ndarray, list, list[int]]] = []
 
     for df in signals_list:
         mat, dates = to_matrix(df.select("date", "id", signal_col), signal_col)

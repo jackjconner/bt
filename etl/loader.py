@@ -18,6 +18,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
+from typing import cast
 
 import polars as pl
 
@@ -102,7 +103,7 @@ class DatasetLoader:
         if ids is not None and "id" in lf_schema:
             lf = lf.filter(pl.col("id").is_in(ids))
 
-        df = lf.collect(engine="in-memory")
+        df = cast(pl.DataFrame, lf.collect(engine="in-memory"))
 
         # Only full-column loads can be validated against the full schema.
         # When a column subset was requested we skip the schema check for

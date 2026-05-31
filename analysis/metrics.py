@@ -5,6 +5,8 @@ from typing import TYPE_CHECKING
 
 import polars as pl
 
+from etl.source import to_float
+
 if TYPE_CHECKING:
     from backtest.engine import BacktestResult
 
@@ -50,12 +52,12 @@ def sharpe(
     std = excess.std()
     if std is None or std == 0:
         return 0.0
-    return float(excess.mean() / std * (TRADING_DAYS**0.5))
+    return to_float(excess.mean()) / to_float(std) * (TRADING_DAYS**0.5)
 
 
 def max_drawdown(nav: pl.DataFrame) -> float:
     dd = nav.select((pl.col("nav") / pl.col("nav").cum_max() - 1.0).alias("dd"))
-    return float(dd["dd"].min())
+    return to_float(dd["dd"].min())
 
 
 @dataclass(frozen=True)
@@ -69,8 +71,8 @@ class BacktestAnalyzerImpl:
             (pl.col("nav") / pl.col("nav").cum_max() - 1.0).alias("drawdown")
         ).select("date", "drawdown")
 
-        ann_vol = float(rets["return_1d"].std() or 0.0) * (TRADING_DAYS**0.5)
-        ann_ret = float(rets["return_1d"].mean() or 0.0) * TRADING_DAYS
+        ann_vol = to_float(rets["return_1d"].std() or 0.0) * (TRADING_DAYS**0.5)
+        ann_ret = to_float(rets["return_1d"].mean() or 0.0) * TRADING_DAYS
 
         from .risk import cagr as _cagr
         from .risk import sortino as _sortino

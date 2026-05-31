@@ -7,6 +7,7 @@ and the engine runs a full path against them.
 
 from __future__ import annotations
 
+import dataclasses
 import math
 
 import polars as pl
@@ -56,20 +57,20 @@ def test_costs_reduce_terminal_nav(synth) -> None:
     prices = loader.load("prices")
     returns = returns_from_prices(prices)
     sig = SignalFrame(df=_momentum(loader), is_categorical=False)
-    kw = {
-        "prices": prices,
-        "transaction_costs": loader.load("transaction_costs"),
-        "universe_mask": loader.load("universe_mask"),
-    }
-    base = {
-        "n_assets": spec.n_assets,
-        "n_dates": spec.n_dates,
-        "enable_universe_mask": True,
-        "max_weight": 0.1,
-    }
-    gross = ProductionBacktestEngine(ProductionBacktestConfig(**base)).run(returns, sig, **kw)
-    net = ProductionBacktestEngine(
-        ProductionBacktestConfig(enable_costs=True, enable_slippage=True, **base)
-    ).run(returns, sig, **kw)
+    tcosts = loader.load("transaction_costs")
+    umask = loader.load("universe_mask")
+    base_cfg = ProductionBacktestConfig(
+        n_assets=spec.n_assets,
+        n_dates=spec.n_dates,
+        enable_universe_mask=True,
+        max_weight=0.1,
+    )
+    net_cfg = dataclasses.replace(base_cfg, enable_costs=True, enable_slippage=True)
+    gross = ProductionBacktestEngine(base_cfg).run(
+        returns, sig, prices=prices, transaction_costs=tcosts, universe_mask=umask
+    )
+    net = ProductionBacktestEngine(net_cfg).run(
+        returns, sig, prices=prices, transaction_costs=tcosts, universe_mask=umask
+    )
 
     assert net.nav_history["nav"][-1] < gross.nav_history["nav"][-1]

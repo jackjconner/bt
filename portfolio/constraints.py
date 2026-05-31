@@ -11,8 +11,12 @@ tests can instantiate ConstraintSpec without pulling in the full scipy stack.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 import numpy as np
+
+if TYPE_CHECKING:
+    import polars as pl
 
 
 @dataclass(frozen=True)
@@ -142,9 +146,9 @@ class ConstraintSpec:
 
 
 def from_polars(
-    position_constraints: object,  # pl.DataFrame (id, min_weight, max_weight, tradable)
-    group_constraints: object,  # pl.DataFrame (sector, min_exposure, max_exposure)
-    security_master: object,  # pl.DataFrame (id, sector, ...)
+    position_constraints: pl.DataFrame,  # (id, min_weight, max_weight, tradable)
+    group_constraints: pl.DataFrame,  # (sector, min_exposure, max_exposure)
+    security_master: pl.DataFrame,  # (id, sector, ...)
     n_assets: int,
     long_only: bool = True,
     net_exposure: float = 1.0,

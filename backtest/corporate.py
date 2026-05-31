@@ -25,7 +25,12 @@ loop stays O(n_actions_today), not O(n_actions_total).
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import numpy as np
+
+if TYPE_CHECKING:
+    import polars as pl
 
 
 def apply_corporate_actions(
@@ -78,7 +83,7 @@ def apply_corporate_actions(
 
 
 def build_action_index(
-    corporate_actions: pl.DataFrame,  # noqa: F821  — polars import at call-site
+    corporate_actions: pl.DataFrame,
 ) -> dict:
     """Pre-index corporate actions by ex_date for O(1) per-step lookup.
 

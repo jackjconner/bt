@@ -1169,7 +1169,7 @@ class Dataset:
     generate: Callable[[GenSpec], pl.DataFrame]
 
     def schema_for(self, spec: GenSpec) -> Schema:
-        return self.schema(spec) if callable(self.schema) else self.schema
+        return self.schema if isinstance(self.schema, Schema) else self.schema(spec)
 
 
 def _ds(name: str, schema: Schema | Callable[[GenSpec], Schema], gen) -> Dataset:

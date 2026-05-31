@@ -17,6 +17,8 @@ import math
 import numpy as np
 import polars as pl
 
+from etl.source import to_float
+
 TRADING_DAYS = 252
 
 
@@ -59,8 +61,8 @@ def cagr(nav: pl.DataFrame, n_sessions: int | None = None) -> float:
     n = n_sessions if n_sessions is not None else len(nav_vals)
     if n <= 0:
         return 0.0
-    start = float(nav_vals.first())
-    end = float(nav_vals.last())
+    start = to_float(nav_vals.first())
+    end = to_float(nav_vals.last())
     if start <= 0:
         return 0.0
     return (end / start) ** (TRADING_DAYS / n) - 1.0
@@ -198,9 +200,9 @@ def hit_rate(returns: pl.DataFrame) -> float:
 
 def best_day(returns: pl.DataFrame) -> float:
     """Largest single-day return (fractional)."""
-    return float(returns["return_1d"].max())
+    return to_float(returns["return_1d"].max())
 
 
 def worst_day(returns: pl.DataFrame) -> float:
     """Smallest (most negative) single-day return (fractional)."""
-    return float(returns["return_1d"].min())
+    return to_float(returns["return_1d"].min())

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import cast
 
 import polars as pl
 
@@ -23,4 +24,4 @@ class StreamLoader:
         return pl.scan_parquet(self.config.source_path)
 
     def load(self) -> pl.DataFrame:
-        return self.as_lazy().collect(engine="streaming")
+        return cast(pl.DataFrame, self.as_lazy().collect(engine="streaming"))

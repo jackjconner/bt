@@ -12,7 +12,12 @@ from __future__ import annotations
 import polars as pl
 
 from analysis import BacktestAnalyzerImpl, alpha, beta, information_ratio, two_way_turnover
-from backtest import ProductionBacktestConfig, ProductionBacktestEngine, SignalFrame
+from backtest import (
+    BacktestResult,
+    ProductionBacktestConfig,
+    ProductionBacktestEngine,
+    SignalFrame,
+)
 from etl import adjust_prices, check, to_masked_matrix, to_matrix
 from models import (
     ModelConfig,
@@ -204,7 +209,7 @@ def _backtest_setup(ctx: BenchmarkContext) -> dict:
     }
 
 
-def _backtest_run(inp: dict) -> object:
+def _backtest_run(inp: dict) -> BacktestResult:
     return ProductionBacktestEngine(inp["cfg"]).run(
         inp["returns"],
         inp["signals"],
@@ -214,7 +219,7 @@ def _backtest_run(inp: dict) -> object:
     )
 
 
-def _backtest_frames(out: object) -> dict[str, object]:
+def _backtest_frames(out: BacktestResult) -> dict[str, object]:
     return {"nav": out.nav_history, "trades": out.trade_log}
 
 
