@@ -1,14 +1,23 @@
 # Working Notes
 
 ## Where we are
-Taking every module from POC → production. Feature plans + unique data
-schemas are in `PRODUCTION_PLAN.md` (produced by 7 module sub-agents).
-Now building: (1) synthetic data layer for all unique schemas, then
-(2) the production features per module.
+DONE. Every module taken POC → production. `PRODUCTION_PLAN.md` holds the
+per-module feature plans + unique schema list. Built: synthetic data layer
+(`etl/schema.py`, `etl/datasets.py` — 31 datasets, schema-validated) and the
+production features in all 7 modules, wired end-to-end in `pipeline.py` and
+`main.py`. 440 tests pass, ruff clean.
 
 ## Active task
-Phase A — synthetic data foundation: `etl/schema.py` (schema + validation),
-`etl/datasets.py` (generator per schema + registry). Then Phase B — features.
+None — all goal tasks complete. Two benign pytest warnings remain (ElasticNet
+l1_ratio=0 convergence; spearmanr ConstantInput) from intentional edge-case
+tests in models/.
+
+## Follow-ups if resumed
+- Calendar vs session axis: raw `generate_returns` still uses calendar days;
+  the pipeline derives returns from the price panel to stay session-aligned.
+  Could migrate `generate_returns` to `session_axis` (DECISIONS.md cross-cut).
+- Infra-only plan items not built (out of code scope): flamegraphs/py-spy,
+  HTML tear sheets, CI gating wiring.
 
 ## Recent decisions (and why)
 - Synthetic generators + schema registry live under `etl/` (that's where
