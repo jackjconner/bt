@@ -39,7 +39,24 @@ portfolio → backtest → profiling. etl first because the others consume its
 loaders; backtest late because it depends on costs/calendar/mask.
 
 ## Verification
-`uv run pytest -q` and `uv run ruff check`. No commit hooks in this repo.
+`uv run pytest -q`, `uv run ruff check`, `uv run ruff format --check`,
+`uv run ty check`. Commit via `scripts/committer "<msg>" [paths...]`, which
+gates every commit on ruff (lint + format) and ty before committing — no
+`--no-verify`, no suppression markers (`# type: ignore`/`# noqa`). ruff is
+line-length 100 / strong select minus the ambiguous-unicode RUF rules; ty is
+strict with `error-on-warning`. Both are green repo-wide.
+
+## Gates + improvement loop (added this session)
+- ruff + ty are dev deps with config in `pyproject.toml`; `scripts/committer`
+  enforces them per commit. ty was driven 293→0 with no suppression (schema
+  `DataTypeLike` annotation, `etl.source.to_float` for polars-aggregation
+  typing, generic `ComponentBenchmark`, widened annotations, typed casts).
+- `.claude/skills/component-improvement-loop/` — the skill for iteratively
+  improving a component behind its API: head agent proposes a target, fans out
+  per-component sub-agents in worktrees, each lands a PR (`pr-writeup.md`)
+  gated on lint/types/correctness/profiling/evaluation, serial-merged with
+  re-validation, then a docs agent reconciles. Ledgers: `IMPROVEMENTS.md`
+  (round log + dedup) and `API_REQUESTS.md` (inter-agent data requests).
 
 ## Don't lose
 - `data/` dir is stale bytecode only (old pkg removed in 5fc0dfe); ignore it.
