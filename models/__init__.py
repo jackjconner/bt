@@ -27,6 +27,7 @@ from .walk_forward import (
     WFResult,
     walk_forward_cv,
 )
+from .wf_batched import is_ridge_factory, walk_forward_cv_batched
 
 __all__ = [
     "CVConfig",
@@ -61,6 +62,7 @@ __all__ = [
     "date_ordinals",
     "held_out_r2",
     "ic_stats",
+    "is_ridge_factory",
     "load_artifact",
     "predict_from_artifact",
     "rank_ic_score",
@@ -68,4 +70,5 @@ __all__ = [
     "save_artifact",
     "splits_from_calendar",
     "walk_forward_cv",
+    "walk_forward_cv_batched",
 ]

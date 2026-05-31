@@ -154,12 +154,31 @@ class WalkForwardConfig:
         Forward per-sample weights to ``model.fit`` if the model supports it.
     inner_val_frac:
         Fraction of each train fold held out for inner alpha selection.
+    engine:
+        Which CV engine to run (additive; default ``"auto"``).
+
+        * ``"auto"`` — use the batched numpy-core engine
+          (``wf_batched.walk_forward_cv_batched``) when ``model_factory`` yields a
+          closed-form ridge *and* the panel is date-sorted; otherwise fall through
+          to the generic per-fold loop.  The two produce the same ``WFResult`` (the
+          batched engine reproduces the weighted ridge, scaling, alpha selection
+          and per-date IC; coefficients agree to ~1e-13).
+        * ``"loop"`` — always run the generic per-fold sklearn loop (the original
+          behaviour; useful for differential testing and non-ridge models).
+        * ``"batched"`` — force the batched engine; raises if the factory is not a
+          closed-form ridge.
+
+        The batched engine accumulates each date block's raw moments once and
+        assembles every fold's (and inner-CV sub-window's) Gram as a difference of
+        cumulative block sums, so the expanding/rolling windows never refit from
+        scratch and all candidate alphas share one Gram.
     """
 
     alpha_grid: list[float] = field(default_factory=lambda: [0.01, 0.1, 1.0, 10.0])
     scale_features: bool = True
     use_sample_weights: bool = True
     inner_val_frac: float = 0.2
+    engine: str = "auto"
 
 
 @dataclass(frozen=True)
@@ -397,6 +416,43 @@ def _assemble_wf_result(
 _DEFAULT_WF_CONFIG = WalkForwardConfig()
 
 
+def _groups_sorted(groups: np.ndarray) -> bool:
+    """True when date ordinals are non-decreasing (``build_panel`` guarantees it).
+
+    The batched engine assembles fold Grams from cumulative per-date-block
+    moments, which requires the panel rows to be grouped contiguously by date in
+    ascending order.  ``build_panel`` sorts by ``(date, id)``, so this holds for
+    every production panel; the guard keeps the engine correct if a hand-built,
+    unsorted panel is ever passed (it then runs the generic loop).
+    """
+    return bool(len(groups) <= 1 or np.all(np.diff(groups) >= 0))
+
+
+def _use_batched_engine(panel: PanelArrays, model_factory, config: WalkForwardConfig) -> bool:
+    """Decide whether ``walk_forward_cv`` dispatches to the batched engine.
+
+    ``engine="loop"`` never does; ``engine="batched"`` always does (and the
+    batched engine raises if the factory is not a closed-form ridge);
+    ``engine="auto"`` does only when the factory is a closed-form ridge and the
+    panel is date-sorted.
+    """
+    from .wf_batched import is_ridge_factory
+
+    if config.engine == "loop":
+        return False
+    n_features = panel.X.shape[1]
+    if config.engine == "batched":
+        if not is_ridge_factory(model_factory, n_features):
+            raise ValueError(
+                "engine='batched' requires a closed-form RidgeModel factory; "
+                "use engine='auto' or 'loop' for other models"
+            )
+        return True
+    if config.engine != "auto":
+        raise ValueError(f"unknown engine {config.engine!r}; expected auto|loop|batched")
+    return is_ridge_factory(model_factory, n_features) and _groups_sorted(panel.groups)
+
+
 def walk_forward_cv(
     panel: PanelArrays,
     splitter,
@@ -423,6 +479,11 @@ def walk_forward_cv(
     -------
     WFResult
     """
+    if _use_batched_engine(panel, model_factory, config):
+        from .wf_batched import walk_forward_cv_batched
+
+        return walk_forward_cv_batched(panel, splitter, model_factory, config)
+
     X, y = panel.X, panel.y
     groups = panel.groups
     weights = panel.weights
