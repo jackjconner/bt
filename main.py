@@ -124,7 +124,7 @@ PIPELINE_SPEC = GenSpec(n_assets=100, n_dates=252, n_features=20, n_factors=5, s
 # 1 / 3 / 5 / 8 / 20 years (252 / 756 / 1260 / 2016 / 5040 trading days).
 # fit_scaling controls for the off-axis dims, so each axis gets a clean slope.
 _FEAT, _FAC, _SEED = 10, 4, 0
-HARNESS_GRID = [
+_FULL_GRID = [
     # n_assets sweep @ 1yr: 50 → 3000 names
     GenSpec(n_assets=50, n_dates=252, n_features=_FEAT, n_factors=_FAC, seed=_SEED),
     GenSpec(n_assets=100, n_dates=252, n_features=_FEAT, n_factors=_FAC, seed=_SEED),  # baseline
@@ -139,6 +139,22 @@ HARNESS_GRID = [
     GenSpec(n_assets=100, n_dates=2016, n_features=_FEAT, n_factors=_FAC, seed=_SEED),
     GenSpec(n_assets=100, n_dates=5040, n_features=_FEAT, n_factors=_FAC, seed=_SEED),
 ]
+
+# Fast inner-loop grid for iteration (BT_GRID=small): the same anchored shape but
+# capped at 500 assets / 5yr. It still reveals each component's slope and a
+# change's *relative* win (a super-linear stage is already super-linear at
+# 200→500), but skips the multi-minute 3000-asset / 20yr points. The full grid —
+# the production headline — runs once at PR / adjudication time.
+_SMALL_GRID = [
+    GenSpec(n_assets=100, n_dates=252, n_features=_FEAT, n_factors=_FAC, seed=_SEED),  # baseline
+    GenSpec(n_assets=200, n_dates=252, n_features=_FEAT, n_factors=_FAC, seed=_SEED),
+    GenSpec(n_assets=500, n_dates=252, n_features=_FEAT, n_factors=_FAC, seed=_SEED),
+    GenSpec(n_assets=100, n_dates=756, n_features=_FEAT, n_factors=_FAC, seed=_SEED),
+    GenSpec(n_assets=100, n_dates=1260, n_features=_FEAT, n_factors=_FAC, seed=_SEED),
+]
+
+# BT_GRID=small → fast iteration grid; default → the authoritative full sweep.
+HARNESS_GRID = _SMALL_GRID if os.environ.get("BT_GRID", "full") == "small" else _FULL_GRID
 
 # When flame-graph capture is on, profile only the extreme point of each sweep
 # axis (largest n_assets, largest n_dates) — where bottlenecks dominate — instead
