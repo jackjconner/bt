@@ -10,7 +10,7 @@ Expected fields (all required):
     pr: int
     date: str   (ISO-8601)
     metric: str
-    verdict: str  (accepted | rejected)
+    verdict: str  (accepted | rejected | pending)
     headline_delta: str
 """
 
@@ -20,8 +20,10 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-# Recognised verdict values.
-VERDICTS = frozenset({"accepted", "rejected"})
+# Recognised verdict values. ``pending`` is a not-yet-merged change under review
+# (the report is written when the PR is adjudicated; the verdict flips to
+# ``accepted`` on merge or ``rejected`` if dropped).
+VERDICTS = frozenset({"accepted", "rejected", "pending"})
 
 # Scalar YAML value: bare string, quoted string, or integer.
 _SCALAR_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*):\s*(.+)$")
