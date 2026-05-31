@@ -340,7 +340,9 @@ def _choose_alpha_batched(
     The split is by *sample count* on the full (scaled) train fold — identical to
     the incumbent.  The inner-train sub-window is a date prefix (assembled from
     block moments); the validation slice is the remaining rows, predicted with the
-    full-train scaling and scored by ``held_out_r2``.
+    full-train scaling and scored by held-out R² (the same formula as
+    ``scoring.held_out_r2``), and all candidate alphas are scored together.  Ties
+    keep the earliest alpha — matching ``_best_alpha``'s strict-``>`` loop.
     """
     if len(alpha_grid) == 1:
         return alpha_grid[0]
