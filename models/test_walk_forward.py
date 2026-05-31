@@ -503,3 +503,100 @@ class TestAssembleWfResult:
         np.testing.assert_array_equal(result.all_preds, preds)
         assert result.predictions_panel is not None
         assert len(result.predictions_panel) == n
+
+
+# --------------------------------------------------------------------------- #
+# fold IC dispersion diagnostics (additive, flag-gated)
+# --------------------------------------------------------------------------- #
+
+
+def _ridge_factory():
+    def factory(alpha):
+        return RidgeModel(ModelConfig(n_features=5, alpha=alpha))
+
+    return factory
+
+
+class TestFoldICDispersionDiagnostics:
+    """``fold_ic_dispersion_enabled`` adds per-fold IC dispersion + hit-rate
+    diagnostics from the existing per-date ``ic_values`` without disturbing the
+    flag-off numbers."""
+
+    def _run(self, *, enabled: bool, engine: str):
+        feat_df, tgt_df = _synthetic_panel(n_dates=60, n_assets=10, n_features=5)
+        panel = build_panel(feat_df, tgt_df, "fwd_ret_1")
+        splitter = WalkForwardSplitter(n_splits=4, min_train_periods=10)
+        config = WalkForwardConfig(
+            alpha_grid=[0.1, 1.0],
+            fold_ic_dispersion_enabled=enabled,
+            engine=engine,
+        )
+        return walk_forward_cv(panel, splitter, _ridge_factory(), config)
+
+    @pytest.mark.parametrize("engine", ["auto", "loop"])
+    def test_flag_off_no_new_fields(self, engine):
+        result = self._run(enabled=False, engine=engine)
+        assert result.fold_diagnostics is None
+        for fr in result.fold_results:
+            assert fr.fold_ic_std is None
+            assert fr.fold_hit_rate is None
+
+    @pytest.mark.parametrize("engine", ["auto", "loop"])
+    def test_flag_off_aggregates_byte_identical(self, engine):
+        """Flag toggling must not move mean_ic / mean_r2 (or any fold number)."""
+        off = self._run(enabled=False, engine=engine)
+        on = self._run(enabled=True, engine=engine)
+        assert on.mean_ic == off.mean_ic
+        assert on.mean_r2 == off.mean_r2
+        assert on.std_r2 == off.std_r2
+        assert on.ic_ir == off.ic_ir
+        assert len(on.fold_results) == len(off.fold_results)
+        for fr_on, fr_off in zip(on.fold_results, off.fold_results, strict=True):
+            assert fr_on.test_ic == fr_off.test_ic
+            assert fr_on.test_r2 == fr_off.test_r2
+            np.testing.assert_array_equal(fr_on.ic_values, fr_off.ic_values)
+
+    @pytest.mark.parametrize("engine", ["auto", "loop"])
+    def test_flag_on_populates_diagnostics(self, engine):
+        result = self._run(enabled=True, engine=engine)
+        assert result.fold_diagnostics is not None
+        assert len(result.fold_diagnostics) == len(result.fold_results)
+        for i, (fr, diag) in enumerate(
+            zip(result.fold_results, result.fold_diagnostics, strict=True)
+        ):
+            # per-fold fields populated and within valid ranges
+            assert fr.fold_ic_std is not None
+            assert fr.fold_hit_rate is not None
+            assert fr.fold_ic_std >= 0.0
+            assert np.isfinite(fr.fold_ic_std)
+            assert 0.0 <= fr.fold_hit_rate <= 1.0
+            # diagnostics dict mirrors the fold fields
+            assert diag["fold"] == float(i)
+            assert diag["fold_ic_std"] == fr.fold_ic_std
+            assert diag["fold_hit_rate"] == fr.fold_hit_rate
+            assert diag["n_test_dates"] == float(len(fr.ic_values))
+            # reproduce the diagnostics directly from ic_values (no IC recompute)
+            assert fr.fold_ic_std == float(fr.ic_values.std())
+            expected_hit = float(np.count_nonzero(fr.ic_values > 0.0) / len(fr.ic_values))
+            assert fr.fold_hit_rate == expected_hit
+
+    def test_auto_and_loop_engines_agree_on_diagnostics(self):
+        auto = self._run(enabled=True, engine="auto")
+        loop = self._run(enabled=True, engine="loop")
+        assert auto.fold_diagnostics is not None
+        assert loop.fold_diagnostics is not None
+        for da, dl in zip(auto.fold_diagnostics, loop.fold_diagnostics, strict=True):
+            assert da["fold_ic_std"] == pytest.approx(dl["fold_ic_std"], abs=1e-12)
+            assert da["fold_hit_rate"] == pytest.approx(dl["fold_hit_rate"], abs=1e-12)
+
+
+def test_fold_ic_diagnostics_helper():
+    from .walk_forward import _fold_ic_diagnostics
+
+    # empty fold → zeros
+    assert _fold_ic_diagnostics(np.array([])) == (0.0, 0.0)
+    # mixed signs: std is population std, hit rate is fraction > 0
+    ic = np.array([0.2, -0.1, 0.3, 0.0])
+    std, hit = _fold_ic_diagnostics(ic)
+    assert std == pytest.approx(float(ic.std()))
+    assert hit == pytest.approx(2.0 / 4.0)  # 0.0 is not > 0
