@@ -108,6 +108,55 @@ def apply_net_exposure_cap(
     return result
 
 
+def apply_short_availability_cap(
+    weights: np.ndarray,
+    *,
+    shortable: np.ndarray,
+    loan_availability: np.ndarray,
+    nav: float,
+) -> np.ndarray:
+    """Gate short positions by per-asset borrow availability.
+
+    Two rules are applied, only to the short (negative-weight) leg; long
+    positions pass through untouched:
+
+    1. **Hard borrow ban** — assets with ``shortable=False`` cannot be sold
+       short; any negative target weight on them is set to ``0``.
+    2. **Loan-availability cap** — the short *market value* on each asset is
+       capped at its ``loan_availability`` (a per-asset dollar quantity from the
+       ``borrow_rates`` dataset).  The equivalent weight cap is
+       ``loan_availability / nav``; a negative weight more extreme than
+       ``-loan_availability/nav`` is clipped back to it.
+
+    Parameters
+    ----------
+    weights:
+        Target weights (n_assets,); negatives are shorts.  Not modified in place.
+    shortable:
+        Boolean mask (n_assets,); ``True`` = asset may be shorted today.
+    loan_availability:
+        Per-asset borrowable notional in dollars (n_assets,); ``0`` for
+        non-shortable names.
+    nav:
+        Current NAV in dollars, used to convert the dollar loan cap to a weight.
+
+    Returns
+    -------
+    np.ndarray
+        Weights with the short leg gated; longs unchanged.
+    """
+    result = weights.copy()
+    short_leg = result < 0.0
+    # Rule 1: forbid shorts on non-shortable names.
+    result[short_leg & ~shortable] = 0.0
+    # Rule 2: cap remaining short magnitude by loan availability (dollar → weight).
+    if nav > 0.0:
+        weight_floor = -loan_availability / nav
+        capped = short_leg & ~np.isnan(weight_floor) & (result < weight_floor)
+        result[capped] = weight_floor[capped]
+    return result
+
+
 def apply_all_constraints(
     weights: np.ndarray,
     *,

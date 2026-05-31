@@ -66,6 +66,8 @@ def weight_space_eligible(
         return False
     if cfg.enable_cash_interest:
         return False
+    if cfg.enable_short_availability_gating:
+        return False
     return not cfg.enable_financing
 
 
