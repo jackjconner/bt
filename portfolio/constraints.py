@@ -98,51 +98,110 @@ class ConstraintSpec:
             }
         )
 
-        # Gross exposure inequality bounds
-        if self.min_gross is not None:
-            mg = float(self.min_gross)
-            cons.append(
-                {
-                    "type": "ineq",
-                    "fun": lambda w, mg=mg: np.abs(w).sum() - mg,
-                }
-            )
-        if self.max_gross is not None:
-            mg = float(self.max_gross)
-            cons.append(
-                {
-                    "type": "ineq",
-                    "fun": lambda w, mg=mg: mg - np.abs(w).sum(),
-                }
-            )
-
-        # Sector constraints (linear)
-        if self.sector_map is not None:
-            sectors = np.asarray(self.sector_map)
-            unique_sectors = np.unique(sectors)
-            for s in unique_sectors:
-                mask = (sectors == s).astype(float)
-                s_int = int(s)
-                if s_int in self.sector_min:
-                    lo = float(self.sector_min[s_int])
-                    cons.append(
-                        {
-                            "type": "ineq",
-                            "fun": lambda w, m=mask, lo=lo: m @ w - lo,
-                            "jac": lambda w, m=mask: m,
-                        }
-                    )
-                if s_int in self.sector_max:
-                    hi = float(self.sector_max[s_int])
-                    cons.append(
-                        {
-                            "type": "ineq",
-                            "fun": lambda w, m=mask, hi=hi: hi - m @ w,
-                            "jac": lambda w, m=mask: -m,
-                        }
-                    )
+        cons.extend(_gross_scipy_constraints(self.min_gross, self.max_gross))
+        cons.extend(_sector_scipy_constraints(self.sector_map, self.sector_min, self.sector_max))
 
         return cons
+
+
+def _gross_scipy_constraints(
+    min_gross: float | None,
+    max_gross: float | None,
+) -> list[dict]:
+    """Build scipy constraint dicts for gross-exposure bounds."""
+    cons: list[dict] = []
+    if min_gross is not None:
+        mg = float(min_gross)
+        cons.append(
+            {
+                "type": "ineq",
+                "fun": lambda w, mg=mg: np.abs(w).sum() - mg,
+            }
+        )
+    if max_gross is not None:
+        mg = float(max_gross)
+        cons.append(
+            {
+                "type": "ineq",
+                "fun": lambda w, mg=mg: mg - np.abs(w).sum(),
+            }
+        )
+    return cons
+
+
+def _sector_scipy_constraints(
+    sector_map: np.ndarray | None,
+    sector_min: dict[int, float],
+    sector_max: dict[int, float],
+) -> list[dict]:
+    """Build scipy constraint dicts for per-sector exposure bounds."""
+    cons: list[dict] = []
+    if sector_map is None:
+        return cons
+
+    sectors = np.asarray(sector_map)
+    for s in np.unique(sectors):
+        mask = (sectors == s).astype(float)
+        s_int = int(s)
+        if s_int in sector_min:
+            lo = float(sector_min[s_int])
+            cons.append(
+                {
+                    "type": "ineq",
+                    "fun": lambda w, m=mask, lo=lo: m @ w - lo,
+                    "jac": lambda w, m=mask: m,
+                }
+            )
+        if s_int in sector_max:
+            hi = float(sector_max[s_int])
+            cons.append(
+                {
+                    "type": "ineq",
+                    "fun": lambda w, m=mask, hi=hi: hi - m @ w,
+                    "jac": lambda w, m=mask: -m,
+                }
+            )
+
+    return cons
+
+
+def _build_per_asset_bounds(
+    position_constraints: dict[int, dict],
+    n_assets: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Build per-asset min/max weight arrays from position constraints.
+
+    Non-tradable assets receive zero weight (min=max=0).  Assets absent from
+    the constraint table default to [0, 1].
+    """
+    min_w = np.zeros(n_assets)
+    max_w = np.zeros(n_assets)
+    for i in range(n_assets):
+        if i in position_constraints:
+            row = position_constraints[i]
+            if not row["tradable"]:
+                min_w[i] = max_w[i] = 0.0
+            else:
+                min_w[i] = row["min_weight"]
+                max_w[i] = row["max_weight"]
+        else:
+            # default: unconstrained within [0, 1]
+            min_w[i] = 0.0
+            max_w[i] = 1.0
+    return min_w, max_w
+
+
+def _build_sector_map(
+    security_master_id_sector: list[tuple[int, str]],
+    sector_str_to_int: dict[str, int],
+    n_assets: int,
+) -> np.ndarray:
+    """Build the integer sector-label array from a list of (asset_id, sector_str) pairs."""
+    sector_map = np.zeros(n_assets, dtype=int)
+    for aid, sector_str in security_master_id_sector:
+        if 0 <= aid < n_assets:
+            sector_map[aid] = sector_str_to_int[sector_str]
+    return sector_map
 
 
 def from_polars(
@@ -168,36 +227,17 @@ def from_polars(
     """
     import polars as pl
 
-    ids = list(range(n_assets))
-
     # per-asset bounds from position_constraints
     pc = {row["id"]: row for row in position_constraints.iter_rows(named=True)}
-    min_w = np.zeros(n_assets)
-    max_w = np.zeros(n_assets)
-    for i in ids:
-        if i in pc:
-            row = pc[i]
-            if not row["tradable"]:
-                min_w[i] = max_w[i] = 0.0
-            else:
-                min_w[i] = row["min_weight"]
-                max_w[i] = row["max_weight"]
-        else:
-            # default: unconstrained within [0, 1]
-            min_w[i] = 0.0
-            max_w[i] = 1.0
+    min_w, max_w = _build_per_asset_bounds(pc, n_assets)
 
     # sector map: id → sector integer label
     sm = security_master.select("id", "sector")
-    # cast categorical to string then map to int
     unique_sectors = sorted(sm["sector"].cast(pl.String).unique().to_list())
     sector_str_to_int = {s: i for i, s in enumerate(unique_sectors)}
 
-    sector_map = np.zeros(n_assets, dtype=int)
-    for row in sm.iter_rows(named=True):
-        aid = row["id"]
-        if 0 <= aid < n_assets:
-            sector_map[aid] = sector_str_to_int[row["sector"]]
+    id_sector_pairs = [(row["id"], row["sector"]) for row in sm.iter_rows(named=True)]
+    sector_map = _build_sector_map(id_sector_pairs, sector_str_to_int, n_assets)
 
     # sector min/max from group_constraints (keyed by sector string)
     sector_min: dict[int, float] = {}
