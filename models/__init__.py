@@ -1,4 +1,6 @@
 from ._protocol import FinancialModel
+from .boosting import GradientBoostConfig, GradientBoostModel
+from .compare import ModelComparison, compare_models
 from .cross_val import CVConfig, CVResult, cv_loop
 from .models_zoo import ElasticNetConfig, ElasticNetModel, LassoConfig, LassoModel
 from .panel import PanelArrays, build_panel, date_ordinals
@@ -30,21 +32,18 @@ __all__ = [
     "CVResult",
     "ElasticNetConfig",
     "ElasticNetModel",
-    # existing
     "FinancialModel",
     "FoldResult",
-    # walk-forward CV
     "FoldScaler",
-    # model zoo
+    "GradientBoostConfig",
+    "GradientBoostModel",
     "LassoConfig",
     "LassoModel",
-    # persistence
     "ModelArtifact",
+    "ModelComparison",
     "ModelConfig",
     "ModelResult",
-    # panel
     "PanelArrays",
-    # splitters
     "PurgedEmbargoCVSplitter",
     "RidgeModel",
     "RollingWindowSplitter",
@@ -53,13 +52,13 @@ __all__ = [
     "WalkForwardSplitter",
     "artifact_from_fold",
     "build_panel",
+    "compare_models",
     "cv_loop",
     "date_ordinals",
     "held_out_r2",
     "ic_stats",
     "load_artifact",
     "predict_from_artifact",
-    # scoring
     "rank_ic_score",
     "rank_ic_series",
     "save_artifact",
