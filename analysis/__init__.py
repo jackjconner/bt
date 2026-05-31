@@ -16,6 +16,11 @@ from .benchmark import (
     tracking_error,
     up_capture,
 )
+from .engine import (
+    BenchmarkMetrics,
+    analyze_fused,
+    benchmark_metrics_fused,
+)
 from .metrics import (
     AnalysisResult,
     BacktestAnalyzerImpl,
@@ -69,13 +74,16 @@ __all__ = [
     "AttributionReport",
     "BacktestAnalyzer",
     "BacktestAnalyzerImpl",
+    "BenchmarkMetrics",
     "BrinsonDecomposition",
     "FactorAttributionResult",
     "active_returns",
     "alpha",
     "analyze_attribution",
+    "analyze_fused",
     "annual_returns",
     "annualized_return_calendar",
+    "benchmark_metrics_fused",
     "benchmark_returns_to_fractional",
     "best_day",
     "beta",
