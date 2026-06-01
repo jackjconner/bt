@@ -54,6 +54,36 @@ class NeutralizationResult:
     """Long-format (date, id, signal) of the residualized signal."""
 
 
+def _ols_residual_batched(S: np.ndarray, X: np.ndarray) -> np.ndarray:
+    """Vectorized per-date OLS residual when the regressor matrix is static.
+
+    ``S`` is ``(n_dates, n_assets)`` of signal values with **no NaN** (the
+    caller guarantees this; the per-date :func:`_ols_residual` loop handles the
+    irregular-coverage case).  ``X`` is the ``(n_assets, k)`` regressor matrix,
+    identical across dates (sector dummies are time-invariant).
+
+    Because ``X`` is shared, the whole panel is one batched least-squares solve
+    ``lstsq(X, Sᵀ)`` — a single LAPACK call replaces ``n_dates`` separate
+    solves and the Python loop around them.  The residual is then z-scored
+    cross-sectionally per date with the *same* tolerance rule as
+    :func:`_ols_residual`.  Numerically this matches the per-date path to
+    floating-point round-off (LAPACK's multi-RHS path differs from the
+    single-RHS path only at the ~1e-15 level), well inside the IC tolerance.
+
+    Returns ``(n_dates, n_assets)`` of residuals.
+    """
+    Y = S.T  # (n_assets, n_dates)
+    beta, _, _, _ = np.linalg.lstsq(X, Y, rcond=None)
+    resid = Y - X @ beta  # (n_assets, n_dates)
+
+    std = resid.std(axis=0)  # population std per date, matches resid_v.std()
+    abs_mean = np.abs(Y).mean(axis=0)
+    scale = np.where(abs_mean > 0, abs_mean, 1.0)
+    keep = std > 1e-08 * scale
+    zc = np.where(keep, resid / np.where(std > 0, std, 1.0), 0.0)
+    return zc.T  # (n_dates, n_assets)
+
+
 def _ols_residual(y: np.ndarray, X: np.ndarray) -> np.ndarray:
     """Cross-sectional OLS residual for one date, with missing-data handling.
 
@@ -136,9 +166,17 @@ def neutralize_sector(
 
     n_dates = len(s_dates)
     n_ids = len(ids)
-    resid_mat = np.empty((n_dates, n_ids), dtype=np.float64)
-    for t in range(n_dates):
-        resid_mat[t] = _ols_residual(S[t], sector_arr)
+    # Sector dummies are time-invariant, so the regressor matrix is shared
+    # across every date.  When no signal value is missing (the production case)
+    # the whole panel is one batched least-squares solve instead of a per-date
+    # Python loop — see ``_ols_residual_batched``.  Irregular coverage (NaN in
+    # the signal) keeps the exact per-date masking path.
+    if np.isfinite(S).all():
+        resid_mat = _ols_residual_batched(S, sector_arr)
+    else:
+        resid_mat = np.empty((n_dates, n_ids), dtype=np.float64)
+        for t in range(n_dates):
+            resid_mat[t] = _ols_residual(S[t], sector_arr)
 
     # Build output DataFrame directly from arrays — avoids per-row dict overhead.
     # Each date is repeated n_ids times (row-major matches resid_mat.ravel()).
