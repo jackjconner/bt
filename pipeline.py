@@ -128,6 +128,7 @@ def run_production_pipeline(
     returns = _returns_from_prices(prices)
     tcosts = loader.load("transaction_costs")
     umask = loader.load("universe_mask")
+    borrow = loader.load("borrow_rates")
     sec_master = loader.load("security_master")
     fwd = loader.load("forward_returns")
 
@@ -195,10 +196,18 @@ def run_production_pipeline(
 
     # --- backtest: gross vs net of costs --------------------------------- #
     signals = SignalFrame(df=momentum, is_categorical=False)
+    # Short-availability gating + financing are ON in production: real shorts are
+    # borrow-constrained (shortability / loan availability) and pay borrow cost.
+    # The synthetic book here is long-only by construction (softmax targets are
+    # all-positive), so gating binds on nothing and the numbers are unchanged —
+    # but the production path now models the institutional reality, so a strategy
+    # that *does* short is priced correctly without a config change.
     gross_cfg = ProductionBacktestConfig(
         n_assets=spec.n_assets,
         n_dates=spec.n_dates,
         enable_universe_mask=bt_enable_umask,
+        enable_short_availability_gating=True,
+        enable_financing=True,
         max_weight=bt_max_weight,
     )
     net_cfg = ProductionBacktestConfig(
@@ -207,13 +216,25 @@ def run_production_pipeline(
         enable_universe_mask=bt_enable_umask,
         enable_costs=bt_enable_costs,
         enable_slippage=bt_enable_slippage,
+        enable_short_availability_gating=True,
+        enable_financing=True,
         max_weight=bt_max_weight,
     )
     gross = ProductionBacktestEngine(gross_cfg).run(
-        returns, signals, prices=prices, transaction_costs=tcosts, universe_mask=umask
+        returns,
+        signals,
+        prices=prices,
+        transaction_costs=tcosts,
+        universe_mask=umask,
+        borrow_rates=borrow,
     )
     net = ProductionBacktestEngine(net_cfg).run(
-        returns, signals, prices=prices, transaction_costs=tcosts, universe_mask=umask
+        returns,
+        signals,
+        prices=prices,
+        transaction_costs=tcosts,
+        universe_mask=umask,
+        borrow_rates=borrow,
     )
 
     analyzer = BacktestAnalyzerImpl()
@@ -228,7 +249,12 @@ def run_production_pipeline(
     trial = run_trials(
         "backtest",
         lambda: ProductionBacktestEngine(net_cfg).run(
-            returns, signals, prices=prices, transaction_costs=tcosts, universe_mask=umask
+            returns,
+            signals,
+            prices=prices,
+            transaction_costs=tcosts,
+            universe_mask=umask,
+            borrow_rates=borrow,
         ),
         lambda r: {"nav": r.nav_history},
         n_trials=bt_profile_trials,
