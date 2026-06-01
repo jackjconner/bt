@@ -12,16 +12,23 @@ component profiling harness + integration suite:
   module. `main.py` runs it after the pipeline.
 - `tests/integration/` — per-component contract tests + full e2e + harness
   smoke; root `conftest.py` enables nested-test imports.
-1284 tests pass, ruff clean. `uv run main.py` runs scaling exp → pipeline →
+1291 tests pass, ruff clean. `uv run main.py` runs scaling exp → pipeline →
 harness end-to-end.
 
-**Improvement loop:** through round 007. Rounds 001–006 were perf/explore/
+**Improvement loop:** through round 009. Rounds 001–006 were perf/explore/
 consolidate; **round 007 was the first `feature` round** — 7 components in
 parallel, one additive flag-off/API-only capability each (signals pair-corr #49,
 profiling r²-gating #50, portfolio risk-decomp #51, models fold-diagnostics #52,
 backtest short-gating #53, etl quality-flags #54, analysis drawdown-recovery #55),
-all merged, golden byte-identical (flags ship off). Ideation/dedup found 7 of 9
-seeded `FEATURE_BACKLOG.md` rows were already built — the dedup step is load-bearing.
+all merged, golden byte-identical (flags ship off). Round 008 activated backtest
+short-gating on the production path (#60, golden-neutral). **Round 009 was the first
+all-component `exploit` (perf) round** — 7 parallel workers, each landed a real
+golden-safe win: models rank-IC vectorized ~2.8× (#67), backtest trade-log vectorized
+n_assets-scaling 0.93→0.46 (#65), profiling fit_scaling −62% (#64), etl masked-pivot
+−35% (#62), signals batched sector-OLS −24% (#66), analysis ordered group-by −21%
+(#68), portfolio COO constraint-assembly −7…−27% (#63). Golden held 17/17 byte-identical;
+clean sweep, all in-lane. Ideation/dedup remains load-bearing (round 007: 7 of 9 seeded
+`FEATURE_BACKLOG.md` rows were already built).
 
 ## Active task
 None — all goal tasks complete. Two benign pytest warnings remain (ElasticNet
