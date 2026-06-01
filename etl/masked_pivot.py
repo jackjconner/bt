@@ -52,25 +52,47 @@ def to_masked_matrix(
         Row axis, ascending.
     ids : list[int]
         Column axis, ascending.
+
+    Notes
+    -----
+    The dense block is filled by scatter, not by a Polars ``pivot``.  A
+    ``rank("dense")`` over ``date`` and over ``id`` yields, for every row, its
+    ascending-axis row/column index directly (no sort, no per-id wide column
+    materialisation); a single flat assignment into a pre-zeroed buffer places
+    each value.  This costs one columnar pass plus one numpy scatter instead of
+    the pivot's column-by-column wide build, and scales with the *number of
+    observations* rather than the *number of asset columns* — the dominant cost
+    when the panel is wide.  The output is identical to the pivot path:
+    missing cells are ``0.0`` with ``mask`` ``False``; explicit ``NaN`` values
+    are likewise treated as missing.  A duplicate ``(date, id)`` key (a hard
+    invariant violation that :func:`etl.quality.check` flags) resolves to the
+    first such row in input order.
     """
-    # Determine the full axis from what's observed.
     dates: list[date] = sorted(df["date"].unique().to_list())
     ids: list[int] = sorted(df["id"].unique().to_list())
+    n_d, n_i = len(dates), len(ids)
 
-    # Polars pivot produces the dense wide frame in Rust — no Python loop over
-    # rows.  Columns are labelled by the string representation of each id value,
-    # in the order they appear after sorting by (date, id).  We sort before
-    # pivoting so the id column order is ascending (matching `ids`).
-    wide = (
-        df.sort(["date", "id"])
-        .pivot(on="id", index="date", values=value_col, aggregate_function="first")
-        .sort("date")
+    # Dense rank → 0-based index into the ascending-unique axis, in one Rust
+    # pass per column (no sort of the long frame, no wide-column allocation).
+    coded = df.select(
+        pl.col("date").rank("dense").sub(1).alias("_row"),
+        pl.col("id").rank("dense").sub(1).alias("_col"),
+        pl.col(value_col).alias("_val"),
     )
+    row = coded["_row"].to_numpy()
+    col = coded["_col"].to_numpy()
+    values = coded["_val"].to_numpy()
+    flat = row * n_i + col
 
-    # Extract the numeric block; missing (date, id) pairs become NaN in the
-    # pivot output.  Build the mask before zeroing them out.
-    mat_np = wide.drop("date").to_numpy()
-    mask = ~np.isnan(mat_np)
-    np.nan_to_num(mat_np, copy=False, nan=0.0)
+    mat = np.zeros(n_d * n_i, dtype=np.float64)
+    mask = np.zeros(n_d * n_i, dtype=bool)
+    # Reverse assignment so the first row of any duplicate key wins (matches the
+    # pivot's "first" aggregate); for the unique-key panels this contract
+    # guarantees, order is irrelevant.
+    mat[flat[::-1]] = values[::-1]
+    # An explicit NaN value is "missing": mark a cell observed only where a real
+    # (non-NaN) value landed in it.
+    mask[flat[~np.isnan(values)]] = True
+    np.nan_to_num(mat, copy=False, nan=0.0)
 
-    return mat_np, mask, dates, ids
+    return mat.reshape(n_d, n_i), mask.reshape(n_d, n_i), dates, ids
