@@ -223,6 +223,34 @@ def test_stage_metric_r_squared_empty() -> None:
     assert stage_metric_r_squared([]) == {}
 
 
+def test_confounder_control_filters_on_polars_mode() -> None:
+    """The n_assets fit holds n_dates at its Polars ``mode`` (the modal value).
+
+    Exercises the hoisted NumPy mask path: each dim's controlled subset is built
+    from the Polars-computed mode of every other dim. Here n_dates=252 is modal
+    (3 rows) vs n_dates=999 (1 row), so the n_assets fit must use only the three
+    252-day rows — the off-modal 999-day row carries a slope-distorting elapsed
+    value that a correct mode filter excludes.
+    """
+    df = pl.DataFrame(
+        {
+            "stage": pl.Series(["etl.batch"] * 4, dtype=pl.Categorical),
+            "param_point_id": [0, 1, 2, 3],
+            "n_assets": [100, 200, 400, 800],
+            "n_dates": [252, 252, 252, 999],  # 252 is modal (3 vs 1)
+            "n_features": [10] * 4,
+            "n_factors": [4] * 4,
+            "elapsed_s": [0.1, 0.2, 0.4, 99.0],  # the 999-day row is an outlier
+            "peak_rss_mb": [1.0] * 4,
+        }
+    )
+    fits = fit_scaling(df, run_id="test")
+    n_assets_fit = next(f for f in fits if f.scaling_dim == "n_assets" and f.metric == "elapsed_s")
+    # Only the three modal-n_dates points are used → clean linear slope ≈ 1.
+    assert n_assets_fit.n_points == 3
+    assert n_assets_fit.log_log_slope == pytest.approx(1.0, abs=0.01)
+
+
 def test_confounder_control_isolates_each_axis() -> None:
     """On a two-axis grid each dim's slope is fit holding the others at baseline."""
     fits = fit_scaling(_anchored_two_axis_measurements(), run_id="test")
