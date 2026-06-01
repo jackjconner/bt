@@ -430,9 +430,7 @@ class ProductionBacktestEngine:
             dates,
             nav_hist,
             cash_hist,
-            trade_dates,
-            trade_ids,
-            trade_qty,
+            _build_trade_log(trade_dates, trade_ids, trade_qty),
             fill_dates,
             fill_ids,
             fill_shares,
@@ -760,7 +758,7 @@ def _run_vectorized_weight_space(
     all match the loop frame-for-frame.
     """
     rebal = _rebalance_schedule(dates, cfg)
-    nav_hist, final_weights, trade_dates, trade_ids, trade_qty = run_weight_space_vectorized(
+    nav_hist, final_weights, trade_date_idx, trade_ids, trade_qty = run_weight_space_vectorized(
         cfg,
         dates,
         R,
@@ -777,13 +775,12 @@ def _run_vectorized_weight_space(
         ub=ub,
     )
     cash_hist = [0.0] * n_dates
+    trade_log = _build_trade_log_vectorized(dates, trade_date_idx, trade_ids, trade_qty)
     return _assemble_result(
         dates,
         nav_hist,
         cash_hist,
-        trade_dates,
-        trade_ids,
-        trade_qty,
+        trade_log,
         [],
         [],
         [],
@@ -800,18 +797,54 @@ def _run_vectorized_weight_space(
     )
 
 
+def _build_trade_log_vectorized(
+    dates: list[date],
+    trade_date_idx: np.ndarray,
+    trade_ids: np.ndarray,
+    trade_qty: np.ndarray,
+) -> pl.DataFrame:
+    """Assemble the long-format trade log from the vectorized core's arrays.
+
+    The vectorized core returns the trade log as parallel NumPy arrays
+    (``trade_date_idx`` indexes ``dates``; ``trade_ids`` / ``trade_qty`` already
+    flat).  Resolving the dates with one ``datetime64`` gather and constructing
+    typed Polars series — instead of per-bar ``list.extend`` of ``date`` objects
+    feeding ``new_from_any_values`` inference — produces a byte-identical frame
+    at a fraction of the cost (the assembly dominated at large ``n_assets``).
+    """
+    if trade_date_idx.size == 0:
+        # Match the event loop's empty-list construction exactly (all-Null
+        # schema), so the fast path stays byte-identical when nothing trades.
+        return _build_trade_log([], [], [])
+    date_arr = np.array(dates, dtype="datetime64[D]")
+    return pl.DataFrame(
+        {
+            "date": pl.Series("date", date_arr[trade_date_idx], dtype=pl.Date),
+            "id": pl.Series("id", trade_ids, dtype=pl.Int64),
+            "quantity": pl.Series("quantity", trade_qty, dtype=pl.Float64),
+        }
+    )
+
+
 # --------------------------------------------------------------------------- #
 # Result assembly
 # --------------------------------------------------------------------------- #
+
+
+def _build_trade_log(
+    trade_dates: list[date],
+    trade_ids: list[int],
+    trade_qty: list[float],
+) -> pl.DataFrame:
+    """Build the long-format trade log from the event loop's accumulated lists."""
+    return pl.DataFrame({"date": trade_dates, "id": trade_ids, "quantity": trade_qty})
 
 
 def _assemble_result(
     dates: list[date],
     nav_hist: list[float],
     cash_hist: list[float],
-    trade_dates: list[date],
-    trade_ids: list[int],
-    trade_qty: list[float],
+    trade_log: pl.DataFrame,
     fill_dates: list[date],
     fill_ids: list[int],
     fill_shares: list[float],
@@ -826,7 +859,7 @@ def _assemble_result(
     n_assets: int,
     cumulative_financing_drag: float,
 ) -> BacktestResult:
-    """Build the final BacktestResult from accumulated history lists."""
+    """Build the final BacktestResult from accumulated history."""
     fill_log = pl.DataFrame(
         {
             "date": fill_dates,
@@ -841,7 +874,7 @@ def _assemble_result(
 
     return BacktestResult(
         nav_history=pl.DataFrame({"date": dates, "nav": nav_hist}),
-        trade_log=pl.DataFrame({"date": trade_dates, "id": trade_ids, "quantity": trade_qty}),
+        trade_log=trade_log,
         final_positions=weights
         if shares is None
         else weights_from_shares(
