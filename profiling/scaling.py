@@ -69,39 +69,56 @@ def fit_scaling(
     """
     results: list[ScalingFit] = []
     stages = measurements["stage"].cast(pl.String).unique().to_list()
+    avail_metrics = [m for m in metrics if m in measurements.columns]
+    avail_dims = [d for d in scaling_dims if d in measurements.columns]
 
     for stage in stages:
         stage_df = measurements.filter(pl.col("stage").cast(pl.String) == stage)
-        for metric in metrics:
-            if metric not in stage_df.columns:
-                continue
-            for dim in scaling_dims:
-                if dim not in stage_df.columns:
+
+        # Hoist all per-stage Polars work out of the inner loops: pull each dim
+        # and metric column to NumPy once (Float64, NaN for nulls — so np.isnan
+        # below reproduces the original per-(dim,metric) .drop_nulls()), and take
+        # each dim's mode once. The original recomputed these filters/modes for
+        # every (metric, dim) pair; the controlled subset and the modes depend
+        # only on the stage, so doing them once is exact and ~7× cheaper.
+        dim_cols = {d: stage_df[d].to_numpy().astype(float) for d in avail_dims}
+        metric_cols = {m: stage_df[m].to_numpy().astype(float) for m in avail_metrics}
+        modes: dict[str, object] = {}
+        for d in avail_dims:
+            mode = stage_df[d].mode()
+            modes[d] = None if mode.is_empty() else mode[0]
+        n_rows = stage_df.height
+
+        # Control for confounders: fit each dim's slope using only the points
+        # where every OTHER varied dimension sits at its baseline (modal) value.
+        # On a single-axis grid the others are constant, so this is a no-op; on an
+        # anchored multi-axis grid it yields a clean partial slope per dim instead
+        # of a confounded pooled one. The controlled subset depends only on the
+        # dim (not the metric), so build each per-dim mask + x array once here —
+        # the original rebuilt them for every (metric, dim) pair. Masks are NumPy
+        # over the Polars-computed modes, preserving Polars' mode tie-break.
+        x_by_dim: dict[str, tuple[np.ndarray, np.ndarray]] = {}
+        for dim in avail_dims:
+            controlled = np.ones(n_rows, dtype=bool)
+            for other in avail_dims:
+                if other == dim or modes[other] is None:
                     continue
+                controlled &= dim_cols[other] == modes[other]
+            x_by_dim[dim] = (dim_cols[dim][controlled], controlled)
 
-                # Control for confounders: fit this dim's slope using only the
-                # points where every OTHER varied dimension sits at its baseline
-                # (modal) value. On a single-axis grid the others are constant, so
-                # this is a no-op; on an anchored multi-axis grid it yields a clean
-                # partial slope per dim instead of a confounded pooled one.
-                controlled = stage_df
-                for other in scaling_dims:
-                    if other == dim or other not in stage_df.columns:
-                        continue
-                    mode = stage_df[other].mode()
-                    if not mode.is_empty():
-                        controlled = controlled.filter(pl.col(other) == mode[0])
+        # Iterate (metric, dim) — the original append order — so the returned
+        # list (and the scaling_fits rows it feeds) is byte-identical.
+        for metric in avail_metrics:
+            for dim in avail_dims:
+                x_dim, controlled = x_by_dim[dim]
+                y_metric = metric_cols[metric][controlled]
 
-                xy = controlled.select(dim, metric).drop_nulls()
-                if xy.is_empty():
+                # Drop rows null in either column (NaN) or non-positive (log
+                # undefined) — equals the original drop_nulls + (x>0)&(y>0).
+                valid = (x_dim > 0) & (y_metric > 0)
+                x, y = x_dim[valid], y_metric[valid]
+                if len(x) == 0:
                     continue
-
-                x = xy[dim].to_numpy().astype(float)
-                y = xy[metric].to_numpy().astype(float)
-
-                # Drop rows where either value is non-positive (log undefined)
-                valid = (x > 0) & (y > 0)
-                x, y = x[valid], y[valid]
 
                 # Aggregate to unique x-values by taking the median y per x to
                 # reduce noise from multiple param points with the same dim value.
