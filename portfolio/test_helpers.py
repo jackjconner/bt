@@ -14,7 +14,6 @@ from portfolio.constraints import (
 )
 from portfolio.optimizer import (
     _build_constraint_matrix,
-    _build_epigraph_rows,
     _build_quadratic_cost,
     _osqp_objective,
     _slsqp_warm_start,
@@ -119,57 +118,6 @@ class TestBuildQuadraticCost:
         n, lam, cov, alpha, cp = self._setup()
         _, q = _build_quadratic_cost(n, lam, cov, alpha, cp, cost_scale=0.0)
         np.testing.assert_array_equal(q[n:], 0.0)
-
-
-# ---------------------------------------------------------------------------
-# _build_epigraph_rows
-# ---------------------------------------------------------------------------
-
-
-class TestBuildEpigraphRows:
-    def test_returns_three_blocks(self):
-        n = 4
-        w0 = np.full(n, 0.25)
-        blocks, l_parts, u_parts = _build_epigraph_rows(n, w0, no_trade_band=0.0)
-        assert len(blocks) == 3
-        assert len(l_parts) == 3
-        assert len(u_parts) == 3
-
-    def test_each_block_has_n_rows(self):
-        n = 5
-        w0 = np.full(n, 0.2)
-        blocks, _l_parts, _u_parts = _build_epigraph_rows(n, w0, no_trade_band=0.0)
-        for blk in blocks:
-            assert blk.shape[0] == n
-
-    def test_upper_epigraph_rhs_equals_w0_plus_band(self):
-        n = 3
-        w0 = np.array([0.1, 0.2, 0.3])
-        band = 0.05
-        _, _, u_parts = _build_epigraph_rows(n, w0, no_trade_band=band)
-        # upper epigraph: w_i - t_i ≤ w0_i + band  → u_part index 1
-        np.testing.assert_allclose(u_parts[1], w0 + band)
-
-    def test_lower_epigraph_rhs_equals_neg_w0_plus_band(self):
-        n = 3
-        w0 = np.array([0.1, 0.2, 0.3])
-        band = 0.05
-        _, _, u_parts = _build_epigraph_rows(n, w0, no_trade_band=band)
-        # lower epigraph: -w_i - t_i ≤ -w0_i + band  → u_part index 2
-        np.testing.assert_allclose(u_parts[2], -w0 + band)
-
-    def test_no_band_upper_rhs_equals_w0(self):
-        n = 3
-        w0 = np.array([0.3, 0.4, 0.3])
-        _, _, u_parts = _build_epigraph_rows(n, w0, no_trade_band=0.0)
-        np.testing.assert_allclose(u_parts[1], w0)
-
-    def test_t_geq_zero_lower_bound(self):
-        n = 4
-        w0 = np.full(n, 0.25)
-        _, l_parts, _ = _build_epigraph_rows(n, w0, no_trade_band=0.0)
-        # t_i ≥ 0 block: l_part index 0
-        np.testing.assert_array_equal(l_parts[0], 0.0)
 
 
 # ---------------------------------------------------------------------------
