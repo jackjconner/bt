@@ -21,7 +21,7 @@ golden fields hold, new `PipelineSummary` fields gated by `evalgate
 | F-004 | portfolio | transaction-cost-aware rebalancing (turnover penalty / no-trade band) | correctness of net returns; flag-gated objective term | done (≤r005, `cost_scale`/`no_trade_band`) | 26 |
 | F-005 | signals | regime / subsample IC stability | breadth of alpha research; additive metric, defends robustness | done (≤r005, `regime_conditional_ic`) | 24 |
 | F-006 | portfolio | EWMA covariance variant beside Ledoit-Wolf | robustness; additive estimator choice behind a flag | queued (factor-cov level still open; `ewma_cov` exists on returns) | 23 |
-| F-007 | backtest | borrow / short-availability gating + financing costs | correctness for shorts; `borrow_rates` dataset already exists | done r007 #53 (flag-off) | 22 |
+| F-007 | backtest | borrow / short-availability gating + financing costs | correctness for shorts; `borrow_rates` dataset already exists | active r008 #60 (built r007 #53; now on in production) | 22 |
 | F-008 | backtest | multiple order types (limit, MOC/MOO, VWAP/TWAP/POV) | breadth + realism; higher cost, flag per order type | queued | 20 |
 | F-009 | signals | signal combination / orthogonalization | breadth; marginal-contribution of each alpha, additive | done (≤r005, `zscore_blend`/`gram_schmidt`) | 19 |
 | F-010 | signals | pair-wise signal correlation + diversification ratio | breadth; screen alphas for redundancy without a backtest | done r007 #49 | 38 |
