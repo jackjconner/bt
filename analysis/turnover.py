@@ -32,11 +32,19 @@ def one_way_turnover(trade_log: pl.DataFrame) -> pl.DataFrame:
     `abs(delta_weight) / 2` per day, summed across assets.
 
     Returns a DataFrame `(date, turnover_1w)`.
+
+    The ``trade_log`` is grouped after a ``sort("date")`` with
+    ``maintain_order=True`` rather than a hash ``group_by`` followed by a final
+    ``.sort``: the production ``trade_log`` is already emitted in date order
+    (the engine appends each bar's trades in increasing time), so the sort is
+    near-free and the ordered group-by skips building a hash table — measurably
+    cheaper on the long-history grid points while producing identical output for
+    any input ordering.
     """
     return (
-        trade_log.group_by("date")
+        trade_log.sort("date")
+        .group_by("date", maintain_order=True)
         .agg((pl.col("quantity").abs().sum() / 2.0).alias("turnover_1w"))
-        .sort("date")
     )
 
 
@@ -45,11 +53,14 @@ def two_way_turnover(trade_log: pl.DataFrame) -> pl.DataFrame:
 
     Two-way: buys and sells are counted separately, so a full replacement = 200 %.
     Returns a DataFrame `(date, turnover_2w)`.
+
+    See ``one_way_turnover`` for why this sorts first and groups with
+    ``maintain_order=True`` instead of hash-grouping then sorting.
     """
     return (
-        trade_log.group_by("date")
+        trade_log.sort("date")
+        .group_by("date", maintain_order=True)
         .agg(pl.col("quantity").abs().sum().alias("turnover_2w"))
-        .sort("date")
     )
 
 

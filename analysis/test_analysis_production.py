@@ -465,6 +465,25 @@ class TestTurnover:
             rtol=1e-9,
         )
 
+    def test_turnover_date_sorted_for_unsorted_input(self):
+        """Both turnover functions return date-sorted output for any input order.
+
+        The sort-then-ordered-group fast path must not depend on the caller
+        passing a pre-sorted ``trade_log``: shuffling the rows must yield the
+        same date-ordered result the hash-group-then-sort path produced.
+        """
+        from analysis.turnover import one_way_turnover, two_way_turnover
+
+        tl = self._make_trade_log(8, 4, seed=3)
+        shuffled = tl.sample(fraction=1.0, shuffle=True, seed=11)
+
+        for fn, col in ((one_way_turnover, "turnover_1w"), (two_way_turnover, "turnover_2w")):
+            out = fn(shuffled)
+            dates = out["date"].to_list()
+            assert dates == sorted(dates)
+            from_sorted = fn(tl)
+            np.testing.assert_allclose(out[col].to_numpy(), from_sorted[col].to_numpy(), rtol=1e-12)
+
 
 # ---------------------------------------------------------------------------
 # 6. Net-of-cost NAV
