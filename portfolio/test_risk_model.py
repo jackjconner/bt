@@ -72,11 +72,17 @@ class TestFactorRiskModel:
         assert abs(bd.total_variance - (bd.factor_variance + bd.specific_variance)) < 1e-12
 
     def test_factor_risk_breakdown_matches_scalar_helpers(self, small_model, weights):
-        """Breakdown fields must match the lower-level scalar helpers exactly."""
+        """Breakdown fields must agree with the lower-level scalar helpers.
+
+        The breakdown sums the per-factor contribution vector while
+        ``factor_variance`` takes a BLAS dot product; these are mathematically
+        equal but differ by up to a ULP across BLAS builds, so compare with a
+        tolerance rather than bit-exact ``==`` (matches the sibling tests).
+        """
         bd = small_model.factor_risk_breakdown(weights)
-        assert bd.total_variance == small_model.portfolio_variance(weights)
-        assert bd.factor_variance == small_model.factor_variance(weights)
-        assert bd.specific_variance == small_model.specific_variance(weights)
+        assert bd.total_variance == pytest.approx(small_model.portfolio_variance(weights))
+        assert bd.factor_variance == pytest.approx(small_model.factor_variance(weights))
+        assert bd.specific_variance == pytest.approx(small_model.specific_variance(weights))
 
     def test_factor_risk_breakdown_per_factor_sums_to_factor_variance(self, small_model, weights):
         """Per-factor contributions must sum to the factor variance."""
