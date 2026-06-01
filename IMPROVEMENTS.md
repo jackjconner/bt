@@ -167,3 +167,59 @@ metric:   activation — production backtest now runs short-gating + financing O
 eval:     golden held — net_sharpe / gross_sharpe / cost_drag 0.00e+00 (NAV fp-reorder max |Δ| 3.5e-10, rel 3.7e-16); full suite 1285 passed
 PR:       #60
 note:     First round under the per-feature default-state policy (DECISIONS.md). Teed up as a golden-MOVING correctness round (case c); turned out case (b) golden-unchanged — the worker proved the production book is long-only by construction (softmax targets all-positive, no min_weight), so gating touches no negative weight and accrues zero. Correctness insurance: any future short book is now priced for shortability + loan availability + borrow with no config change. Activated at the production construction site (pipeline.py), not the dataclass default (which would ValueError every caller omitting borrow_rates). models fold-diagnostics + etl quality-flags left dormant by decision (no consumer / contract change). Report: reports/round-008/backtest.md.
+
+## 2026-05-31 — round 009: parallel performance sweep across all 7 components  [accepted]
+type:     exploit
+metric:   each component's harness elapsed at the grid extremes — see per-component entries below
+eval:     golden HELD on the merged tree — full suite 1291 passed/1 skipped, evalgate 17/17 (all accuracy fields byte-identical; only the documented 1e-16 FP-noise floor on wf_mean_ic/wf_mean_r2/factor_vol, plus the timing field backtest_p50_s under its 0.5 field-tol). No new PipelineSummary field → no golden re-save.
+PR:       #62 #63 #64 #65 #66 #67 #68
+note:     First all-component EXPLOIT round (cf. round 007 = first all-component feature round). 7 scouts → 7 parallel builders, each finding the biggest golden-safe perf win in its lane via in-process flamegraphs (capture_both). Clean sweep: all 7 landed real wins, all strictly in-lane (zero file overlap), all golden-safe. Headline: models ~2.8× (was the runaway dominant stage), backtest n_assets-scaling 0.93→0.46, profiling −62%, etl −35%, signals −24%, analysis −21%, portfolio −7…−27%. Batch serial-merge (rebase) + single comprehensive re-validation, exactly as round 007 (disjoint lanes). Several workers saw transient backtest_p50_s eval FAILs from concurrent-worker timing jitter; cleared on the idle serial re-validation. Reports: reports/round-009/{models,backtest,signals,etl,profiling,portfolio,analysis}.md.
+
+## 2026-05-31 — models: vectorize per-date rank-IC (drop per-date spearmanr loop)  [accepted]
+type:     exploit
+metric:   models harness elapsed — ~2.8× on the n_dates-heavy path (e.g. 100a×1260d 851.5→303.4 ms; 100a×252d 178.1→64.8 ms)
+eval:     golden held — wf_mean_ic / wf_mean_r2 each moved exactly 1.11e-16 (at the FP-noise floor; summation-order vs scipy's internal Pearson); other 15 fields bit-identical
+PR:       #67
+note:     spearmanr → rankdata(axis=1)+vectorized Pearson on the full cross-section (per-date loop was 86% of stage time). Ragged-group case keeps the per-date loop as fallback + oracle. rank_ic_series API unchanged; both WF engines benefit. models is no longer the runaway dominant stage. Report: reports/round-009/models.md.
+
+## 2026-05-31 — backtest: vectorize trade-log assembly in the weight-space fast path  [accepted]
+type:     exploit
+metric:   backtest harness elapsed — 1.4–1.8× across the grid (3000a×252d 186→131 ms; 100a×5040d 178→100 ms); scaling n_assets^0.93→^0.46
+eval:     golden held — accuracy fields abs_delta 0.00e+00; trade_log/nav_history/cash_history DataFrame.equals vs main = True across 5 grid points; only timing backtest_p50_s moved
+PR:       #65
+note:     Per-bar list.extend of date objects → NumPy repeat/tile/concatenate + typed Polars series (trade-log build 63→1 ms, 57×). A pure repacking of identical values. Deliberately did NOT touch the per-bar cost/slippage loop (nonlinear in path-dependent NAV → would move cost_drag) — remaining headroom for a future round. Report: reports/round-009/backtest.md.
+
+## 2026-05-31 — signals: batch per-date sector OLS into one lstsq solve  [accepted]
+type:     exploit
+metric:   signals harness elapsed — −24% on the date-extreme (100a×5040d 349.8→265.3 ms); scaling n_dates^0.92→^0.87
+eval:     golden held — ic_neutralized / ic_raw / horizon_ic[*] abs_delta 0.00e+00 (multi-RHS lstsq differs at ~1e-15 in residuals, rank-transformed into IC → no observable change)
+PR:       #66
+note:     Hotspot was neutralize_sector→_ols_residual (54% of stage), NOT the already-tuned IC engine. Sector dummies are time-invariant → one batched lstsq(X,Sᵀ) instead of n_dates solves. Per-date path kept as NaN-fallback + oracle. Report: reports/round-009/signals.md.
+
+## 2026-05-31 — etl: scatter-fill masked matrix instead of pivot  [accepted]
+type:     exploit
+metric:   etl harness elapsed — −35% at 3000 assets (95.8→61.4 ms; to_masked_matrix alone 37→9 ms ~4×); improves at every grid point
+eval:     golden held — to_masked_matrix output byte-identical to the pivot (cell-by-cell across the grid); consumed price panel unchanged
+PR:       #62
+note:     pivot cost scaled with asset COLUMNS; replaced with rank("dense")-driven numpy scatter scaling with observations. One documented behavior change on INVALID input only: duplicate (date,id) keys now tiebreak to input-order not sorted-order — a hard invariant violation quality.check flags, never in production/golden/bench. Not ADR-worthy (no valid-input behavior change). Report: reports/round-009/etl.md.
+
+## 2026-05-31 — profiling: vectorize fit_scaling per-stage loops in NumPy  [accepted]
+type:     exploit
+metric:   profiling harness elapsed — 101.9→38.3 ms (−62%, 2.66×; fit_scaling in isolation ~7×). profiling is fixed-overhead, not data-scaling — this cut the constant.
+eval:     golden held — n_scaling_fits=36 PASS, 16 accuracy fields byte-stable (only pre-existing 1e-16 BLAS noise); fit_scaling output identical 36-fit set vs clean main
+PR:       #64
+note:     144 inner iters (9 stages × 4 metrics × 4 dims) each rebuilt the same per-stage Polars filter + recomputed each dim's .mode(); both depend only on (stage,dim) not metric → hoisted once-per-stage into NumPy. Polars .mode() retained for byte-preserved tie-break; append order kept so the fit list is unchanged. Off the production number path. Report: reports/round-009/profiling.md.
+
+## 2026-05-31 — portfolio: assemble OSQP constraint matrix from COO triplets  [accepted]
+type:     exploit
+metric:   portfolio harness elapsed — −7…−27% (n=100 3.27→2.39 ms; constraint build alone 2.58→1.03 ms ~2.5×); −91 net lines
+eval:     golden byte-identical — opt_gross / tracking_error 0 delta, factor_vol at 1e-16 floor; constraint matrix A bit-identical over 32 spec configs → max|Δw|=0.0
+PR:       #63
+note:     The OSQP ADMM solve is intrinsic/irreducible without moving the golden (eps relaxation moves weights ~4e-6, w0 warm-start no benefit — both tested+rejected). The one golden-safe win was constraint assembly: per-block sp.eye/hstack/vstack → COO triplets into one CSC. Further portfolio perf needs a solver-level change = an explore-round target (would move numbers). Report: reports/round-009/portfolio.md.
+
+## 2026-05-31 — analysis: ordered group-by for turnover (skip hash + redundant sort)  [accepted]
+type:     exploit
+metric:   analysis harness elapsed — two_way_turnover 1.44→1.13 ms (−21%) at the long-history extreme (n_dates=5040); neutral at modal point
+eval:     golden held — tracking_error / gross_sharpe / net_sharpe / cost_drag 0.00 delta
+PR:       #68
+note:     group_by("date").agg().sort("date") → sort("date").group_by(maintain_order=True).agg() (sorted-key group-by skips the hash table; leading sort makes output order-independent, pinned by a shuffle test). Rejected the faster set_sorted variant (bakes unsafe sortedness into a public fn). Noted-not-actioned (cross-lane): alpha/beta/IR do 3 redundant _align joins — a harness call-site fix for a future round. Report: reports/round-009/analysis.md.
