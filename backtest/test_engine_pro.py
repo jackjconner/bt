@@ -1498,6 +1498,20 @@ def test_vectorized_matches_loop_all_constraints_and_costs(
     _assert_results_identical(fast, loop)
 
 
+def test_vectorized_matches_loop_no_rebalances(monkeypatch, returns_df, signals):
+    """A schedule that never fires yields an empty, schema-correct trade log.
+
+    Exercises the vectorized core's empty-trade-log branch: with no rebalance
+    bars the long-format log is empty but must carry the same (Date, Int64,
+    Float64) schema as the loop's.
+    """
+    cfg = _cfg(rebalance_dates=frozenset([date(1990, 1, 1)]))  # no panel date matches
+    fast = ProductionBacktestEngine(cfg).run(returns_df, signals)
+    loop = _run_loop(monkeypatch, cfg, returns_df, signals)
+    assert fast.trade_log.height == 0
+    _assert_results_identical(fast, loop)
+
+
 def test_weight_space_eligible_excludes_path_dependent_features(prices_df):
     """Each path-dependent feature forces the loop (fast path declines)."""
     from backtest.engine_pro import weight_space_eligible

@@ -200,18 +200,19 @@ def run_weight_space_vectorized(
     impact_mat: np.ndarray | None,
     lb: np.ndarray | None,
     ub: np.ndarray | None,
-) -> tuple[list[float], np.ndarray, list[date], list[int], list[float]]:
+) -> tuple[list[float], np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Run the batched weight-space backtest.
 
     Returns the same primitive history the event loop accumulates, so the
     caller assembles an identical ``BacktestResult``:
 
-    ``(nav_hist, final_weights, trade_dates, trade_ids, trade_qty)`` where the
-    trade lists are the long-format legacy trade log (one row per asset per
-    rebalance, ``quantity = (target - weights_before) * nav_after_cost``).  The
-    trade columns are returned as plain Python lists so the caller builds the
-    ``pl.DataFrame`` exactly as the event loop does (``date`` objects infer to
-    ``pl.Date``; an object ndarray would not cast).
+    ``(nav_hist, final_weights, trade_date_idx, trade_ids, trade_qty)`` — the
+    long-format legacy trade log (one row per asset per rebalance,
+    ``quantity = (target - weights_before) * nav_after_cost``) returned as three
+    parallel NumPy arrays.  ``trade_date_idx`` indexes into ``dates`` (the caller
+    gathers the actual ``date`` objects once, vectorized); ``trade_ids`` is the
+    tiled asset index; ``trade_qty`` the concatenated per-bar quantities.  The
+    values are identical to the event loop's; only the packing is vectorized.
     """
     n_dates, n_assets = R.shape
     r_frac = R / 100.0
@@ -241,11 +242,13 @@ def run_weight_space_vectorized(
 
     nav = float(cfg.initial_cash)
     nav_hist: list[float] = []
-    trade_dates: list[date] = []
-    trade_ids: list[int] = []
-    trade_qty: list[float] = []
-    asset_ids = np.arange(n_assets)
-    asset_ids_list = asset_ids.tolist()
+    # One quantity row per rebalance bar; stacked into the flat trade log at the
+    # end.  Building the log from these dense ``(n_assets,)`` arrays (then one
+    # vectorized ``repeat`` / ``tile`` / ``reshape``) avoids the per-bar Python
+    # ``list.extend`` + per-element ``new_from_any_values`` type inference that
+    # dominated assembly at large ``n_assets``.
+    rebal_idx: list[int] = []
+    trade_qty_rows: list[np.ndarray] = []
 
     for t in range(n_dates):
         if rebal[t]:
@@ -268,11 +271,21 @@ def run_weight_space_vectorized(
             nav -= tc_cost + slip_cost
 
             # legacy trade log: quantity = (target - weights_before) * nav_after_cost
-            trade_dates.extend([dates[t]] * n_assets)
-            trade_ids.extend(asset_ids_list)
-            trade_qty.extend((d_t * nav).tolist())
+            rebal_idx.append(t)
+            trade_qty_rows.append(d_t * nav)
 
         nav *= 1.0 + port_ret[t]
         nav_hist.append(nav)
 
-    return nav_hist, final_weights, trade_dates, trade_ids, trade_qty
+    n_rebal = len(rebal_idx)
+    if n_rebal:
+        idx = np.asarray(rebal_idx)
+        trade_date_idx = np.repeat(idx, n_assets)
+        trade_ids = np.tile(np.arange(n_assets), n_rebal)
+        trade_qty = np.concatenate(trade_qty_rows)
+    else:
+        trade_date_idx = np.empty(0, dtype=np.intp)
+        trade_ids = np.empty(0, dtype=np.intp)
+        trade_qty = np.empty(0)
+
+    return nav_hist, final_weights, trade_date_idx, trade_ids, trade_qty
