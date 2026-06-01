@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from .scoring import held_out_r2, ic_stats, rank_ic_score, rank_ic_series
+from .scoring import _spearman, held_out_r2, ic_stats, rank_ic_score, rank_ic_series
 
 
 def _groups(n_dates: int, n_assets: int) -> np.ndarray:
@@ -74,6 +74,85 @@ def test_rank_ic_degenerate_date_returns_zero():
     groups = np.array([0, 0], dtype=np.int64)
     _, ic_vals = rank_ic_series(y_true, y_pred, groups)
     assert ic_vals[0] == 0.0
+
+
+def _reference_ic_series(y_true, y_pred, groups):
+    """Per-date Spearman loop — the pre-vectorization reference implementation."""
+    unique = np.sort(np.unique(groups))
+    out = np.empty(len(unique), dtype=np.float64)
+    for i, g in enumerate(unique):
+        mask = groups == g
+        out[i] = _spearman(y_true[mask], y_pred[mask])
+    return unique, out
+
+
+def test_rank_ic_series_matches_per_date_loop_uniform():
+    """Vectorized equal-size path matches the per-date spearman loop to FP noise."""
+    rng = np.random.default_rng(7)
+    n_dates, n_assets = 80, 25
+    y_true = rng.normal(size=n_dates * n_assets)
+    y_pred = 0.4 * y_true + rng.normal(size=n_dates * n_assets)
+    groups = _groups(n_dates, n_assets)
+    g_ref, ic_ref = _reference_ic_series(y_true, y_pred, groups)
+    g_new, ic_new = rank_ic_series(y_true, y_pred, groups)
+    np.testing.assert_array_equal(g_ref, g_new)
+    np.testing.assert_allclose(ic_ref, ic_new, rtol=0, atol=1e-12)
+
+
+def test_rank_ic_series_matches_loop_with_ties():
+    """Tie handling (average ranks) matches spearmanr exactly under heavy ties."""
+    rng = np.random.default_rng(11)
+    n_dates, n_assets = 40, 30
+    # integer values force many ties → exercises average-rank tie-breaking
+    y_true = rng.integers(0, 5, size=n_dates * n_assets).astype(float)
+    y_pred = rng.integers(0, 4, size=n_dates * n_assets).astype(float)
+    groups = _groups(n_dates, n_assets)
+    _, ic_ref = _reference_ic_series(y_true, y_pred, groups)
+    _, ic_new = rank_ic_series(y_true, y_pred, groups)
+    np.testing.assert_allclose(ic_ref, ic_new, rtol=0, atol=1e-12)
+
+
+def test_rank_ic_series_constant_cross_section_returns_zero():
+    """A date where y_pred is constant (zero rank variance) yields 0.0, not NaN."""
+    n_dates, n_assets = 5, 10
+    rng = np.random.default_rng(3)
+    y_true = rng.normal(size=n_dates * n_assets)
+    y_pred = rng.normal(size=n_dates * n_assets)
+    # make date 2's predictions all identical → degenerate
+    y_pred[2 * n_assets : 3 * n_assets] = 1.0
+    groups = _groups(n_dates, n_assets)
+    _, ic_ref = _reference_ic_series(y_true, y_pred, groups)
+    _, ic_new = rank_ic_series(y_true, y_pred, groups)
+    assert ic_new[2] == 0.0
+    np.testing.assert_allclose(ic_ref, ic_new, rtol=0, atol=1e-12)
+
+
+def test_rank_ic_series_ragged_groups_match_loop():
+    """Variable cross-section sizes fall back to the loop and stay correct."""
+    rng = np.random.default_rng(5)
+    # date 0 has 8 obs, date 1 has 12, date 2 has 2 (degenerate → 0.0)
+    sizes = [8, 12, 2]
+    y_true = rng.normal(size=sum(sizes))
+    y_pred = rng.normal(size=sum(sizes))
+    groups = np.concatenate([np.full(s, i, dtype=np.int64) for i, s in enumerate(sizes)])
+    _, ic_ref = _reference_ic_series(y_true, y_pred, groups)
+    _, ic_new = rank_ic_series(y_true, y_pred, groups)
+    np.testing.assert_allclose(ic_ref, ic_new, rtol=0, atol=1e-12)
+    assert ic_new[2] == 0.0
+
+
+def test_rank_ic_series_unsorted_groups():
+    """Interleaved (unsorted) group ordinals still reshape to the right dates."""
+    rng = np.random.default_rng(9)
+    n_dates, n_assets = 12, 15
+    y_true = rng.normal(size=n_dates * n_assets)
+    y_pred = 0.3 * y_true + rng.normal(size=n_dates * n_assets)
+    groups = _groups(n_dates, n_assets)
+    perm = rng.permutation(n_dates * n_assets)
+    yt, yp, gp = y_true[perm], y_pred[perm], groups[perm]
+    _, ic_ref = _reference_ic_series(yt, yp, gp)
+    _, ic_new = rank_ic_series(yt, yp, gp)
+    np.testing.assert_allclose(ic_ref, ic_new, rtol=0, atol=1e-12)
 
 
 def test_ic_stats_keys():
