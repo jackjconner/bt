@@ -70,3 +70,34 @@ def test_nan_value_treated_as_missing():
     mat, mask, _, _ = to_masked_matrix(df, "value")
     assert not mask[0, 1]
     assert mat[0, 1] == 0.0
+
+
+def test_non_contiguous_ids_map_to_ascending_columns():
+    """Sparse / non-0-based ids still map to ascending column positions."""
+    rows = [
+        {"date": date(2020, 1, 2), "id": 7, "value": 7.0},
+        {"date": date(2020, 1, 2), "id": 42, "value": 42.0},
+        {"date": date(2020, 1, 3), "id": 7, "value": 70.0},
+        {"date": date(2020, 1, 3), "id": 42, "value": 420.0},
+    ]
+    df = pl.DataFrame(rows, schema={"date": pl.Date, "id": pl.Int64, "value": pl.Float64})
+    mat, mask, _dates, ids = to_masked_matrix(df, "value")
+    assert ids == [7, 42]
+    assert mat[0, 0] == 7.0 and mat[0, 1] == 42.0
+    assert mat[1, 0] == 70.0 and mat[1, 1] == 420.0
+    assert mask.all()
+
+
+def test_duplicate_key_resolves_to_first_row():
+    """A duplicate (date, id) key keeps the first such row (matches pivot 'first')."""
+    rows = [
+        {"date": date(2020, 1, 2), "id": 0, "value": 10.0},
+        {"date": date(2020, 1, 2), "id": 0, "value": 20.0},
+        {"date": date(2020, 1, 3), "id": 0, "value": 30.0},
+    ]
+    df = pl.DataFrame(rows, schema={"date": pl.Date, "id": pl.Int64, "value": pl.Float64})
+    mat, mask, _dates, _ids = to_masked_matrix(df, "value")
+    assert mat.shape == (2, 1)
+    assert mat[0, 0] == 10.0
+    assert mat[1, 0] == 30.0
+    assert mask.all()
