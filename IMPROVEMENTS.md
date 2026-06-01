@@ -160,3 +160,10 @@ metric:   new capability — drawdown_recovery(nav) → per-event peak/trough/re
 eval:     golden held — all 16 numeric fields byte-identical
 PR:       #55
 note:     Isolates each drawdown event off the same nav/cum_max−1 series analysis already reports; deepest event depth == existing max_drawdown (asserted). Additive, no PipelineSummary field, off the hot path. Tear-sheet material; pairs with portfolio's factor-risk breakdown this round. Report: reports/round-007/analysis.md.
+
+## 2026-05-31 — round 008: activate backtest short-availability gating on the production path  [accepted]
+type:     feature (activation — flips on a round-007 default-off capability)
+metric:   activation — production backtest now runs short-gating + financing ON; golden byte-identical (long-only book → gating binds on nothing)
+eval:     golden held — net_sharpe / gross_sharpe / cost_drag 0.00e+00 (NAV fp-reorder max |Δ| 3.5e-10, rel 3.7e-16); full suite 1285 passed
+PR:       #60
+note:     First round under the per-feature default-state policy (DECISIONS.md). Teed up as a golden-MOVING correctness round (case c); turned out case (b) golden-unchanged — the worker proved the production book is long-only by construction (softmax targets all-positive, no min_weight), so gating touches no negative weight and accrues zero. Correctness insurance: any future short book is now priced for shortability + loan availability + borrow with no config change. Activated at the production construction site (pipeline.py), not the dataclass default (which would ValueError every caller omitting borrow_rates). models fold-diagnostics + etl quality-flags left dormant by decision (no consumer / contract change). Report: reports/round-008/backtest.md.

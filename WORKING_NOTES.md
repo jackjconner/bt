@@ -41,9 +41,12 @@ tests in models/.
   refactor/consolidate evaluation bar (replaces `eval --tolerance 0`). Smoke-tested
   main-vs-main: every field `0.00e+00`.
 - `FEATURE_BACKLOG.md` still-queued: F-006 (portfolio EWMA factor-cov), F-008
-  (backtest order types). Several flag-off capabilities now ship dormant
-  (backtest short-gating; etl quality-flags; models fold-diagnostics) — a future
-  round can flip one on deliberately and move the golden with justification.
+  (backtest order types). Round 008 activated **backtest** short-gating on
+  the production path (#60) — turned out golden-neutral (the production book is
+  long-only, so gating binds on nothing; correctness insurance for any future short
+  book). **etl quality-flags** (contract change) and **models fold-diagnostics** (no
+  consumer yet) remain dormant by decision — activate when a consumer/need appears.
+  Per-feature default-state is now a deliberate, signed-off call (DECISIONS.md).
 
 ## Follow-ups if resumed
 - Calendar vs session axis: raw `generate_returns` still uses calendar days;
