@@ -1,0 +1,785 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>bt · improvement loop — overseer deck</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=IBM+Plex+Mono:ital,wght@0,300;0,400;0,500;0,600;1,400&display=swap" rel="stylesheet" />
+<style>
+/* ============================================================
+   THE LEDGER OF AN AUTONOMOUS MACHINE
+   overseer deck for bt's component-improvement loop
+   ============================================================ */
+
+:root{
+  /* ink & paper — warm near-black, bone text */
+  --ink:        #14110d;   /* warm black ground */
+  --ink-2:      #1c1813;   /* raised panel */
+  --ink-3:      #241f18;   /* hover / inset */
+  --hairline:   #38312657; /* warm hairline */
+  --hairline-2: #4a4234;
+  --bone:       #e9e1cf;   /* primary text */
+  --bone-dim:   #b3a98f;   /* secondary */
+  --bone-faint: #7c735d;   /* tertiary / labels */
+
+  /* signals */
+  --green:   #76e0a0;   /* pass · improvement · gate open */
+  --green-d: #2f7a4e;
+  --amber:   #f0b44b;   /* running · attention · awaiting */
+  --amber-d: #8a6320;
+  --oxide:   #e0654f;   /* fail · regression · revert */
+  --oxide-d: #8a3322;
+  --cyan:    #6fc6d6;   /* data · links · neutral metric */
+  --violet:  #b79be0;   /* docs agent / meta */
+
+  --glow-green: #76e0a033;
+  --glow-amber: #f0b44b2e;
+  --glow-oxide: #e0654f2e;
+
+  --serif: "Instrument Serif", Georgia, serif;
+  --mono: "IBM Plex Mono", ui-monospace, monospace;
+  --r: 3px;
+}
+
+*{ box-sizing:border-box; margin:0; padding:0; }
+html{ scroll-behavior:smooth; }
+body{
+  background:var(--ink);
+  color:var(--bone);
+  font-family:var(--mono);
+  font-size:13px;
+  line-height:1.5;
+  font-weight:400;
+  -webkit-font-smoothing:antialiased;
+  letter-spacing:.01em;
+  overflow-x:hidden;
+  /* drafting-table grain + faint warm vignette */
+  background-image:
+    radial-gradient(120% 80% at 50% -10%, #221c1455 0%, transparent 55%),
+    repeating-linear-gradient(0deg, #ffffff03 0 1px, transparent 1px 3px);
+}
+
+/* film-grain overlay */
+body::after{
+  content:""; position:fixed; inset:0; pointer-events:none; z-index:9999;
+  opacity:.035; mix-blend-mode:overlay;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+::selection{ background:var(--amber); color:var(--ink); }
+
+/* scrollbars */
+::-webkit-scrollbar{ width:10px; height:10px; }
+::-webkit-scrollbar-track{ background:var(--ink); }
+::-webkit-scrollbar-thumb{ background:var(--hairline-2); border-radius:0; border:2px solid var(--ink); }
+::-webkit-scrollbar-thumb:hover{ background:var(--bone-faint); }
+
+.mono{ font-family:var(--mono); }
+.serif{ font-family:var(--serif); }
+.dim{ color:var(--bone-dim); }
+.faint{ color:var(--bone-faint); }
+.green{ color:var(--green); }
+.amber{ color:var(--amber); }
+.oxide{ color:var(--oxide); }
+.cyan{ color:var(--cyan); }
+.violet{ color:var(--violet); }
+.tnum{ font-variant-numeric:tabular-nums; }
+.up{ text-transform:uppercase; letter-spacing:.18em; }
+
+/* ============================================================ MASTHEAD */
+header.masthead{
+  position:sticky; top:0; z-index:100;
+  background:linear-gradient(180deg, #15120df5, #15120de0);
+  backdrop-filter:blur(8px);
+  border-bottom:1px solid var(--hairline-2);
+  padding:14px clamp(16px,3vw,40px) 12px;
+}
+.mast-top{ display:flex; align-items:baseline; gap:18px; flex-wrap:wrap; }
+.wordmark{ font-family:var(--serif); font-size:30px; line-height:.9; letter-spacing:.01em; }
+.wordmark .bt{ color:var(--bone); }
+.wordmark .sub{ color:var(--amber); font-style:italic; }
+.mast-tag{ color:var(--bone-faint); font-size:11px; letter-spacing:.04em; max-width:30ch; }
+.mast-spacer{ flex:1; }
+
+.mast-stat{ text-align:right; }
+.mast-stat .lbl{ font-size:9.5px; letter-spacing:.22em; color:var(--bone-faint); text-transform:uppercase; }
+.mast-stat .val{ font-family:var(--serif); font-size:26px; line-height:1; color:var(--bone); }
+
+.round-pill{
+  display:inline-flex; align-items:center; gap:9px;
+  padding:7px 14px; border:1px solid var(--amber-d);
+  background:var(--glow-amber); border-radius:100px;
+  font-size:11px; letter-spacing:.1em; color:var(--amber);
+}
+.round-pill .dot{ width:8px; height:8px; border-radius:50%; background:var(--amber);
+  box-shadow:0 0 0 0 var(--amber); animation:beat 1.8s infinite; }
+@keyframes beat{
+  0%{ box-shadow:0 0 0 0 #f0b44baa; } 70%{ box-shadow:0 0 0 7px #f0b44b00; } 100%{ box-shadow:0 0 0 0 #f0b44b00; }
+}
+
+/* ratchet strip — cumulative landed rounds, only advances right */
+.ratchet{ display:flex; align-items:center; gap:10px; margin-top:11px; }
+.ratchet .rk-lbl{ font-size:9.5px; letter-spacing:.2em; color:var(--bone-faint); text-transform:uppercase; white-space:nowrap; }
+.ratchet-track{ display:flex; gap:3px; flex:1; align-items:center; }
+.tooth{ flex:1; height:14px; border-radius:1px; background:var(--ink-3);
+  border:1px solid var(--hairline); position:relative; }
+.tooth.landed{ background:linear-gradient(180deg, var(--green), var(--green-d));
+  border-color:var(--green-d); box-shadow:0 0 8px var(--glow-green); }
+.tooth.landed::after{ content:""; position:absolute; right:-3px; top:3px; bottom:3px; width:2px;
+  background:var(--ink); transform:skewX(-22deg); }
+.tooth.rejected{ background:repeating-linear-gradient(45deg,#2a1c18,#2a1c18 3px,#1c1813 3px,#1c1813 6px);
+  border-color:var(--oxide-d); }
+.tooth.active{ background:var(--glow-amber); border-color:var(--amber);
+  animation:toothpulse 2s infinite; }
+@keyframes toothpulse{ 0%,100%{ border-color:var(--amber-d); } 50%{ border-color:var(--amber); } }
+.tooth .tn{ position:absolute; top:-15px; left:50%; transform:translateX(-50%);
+  font-size:8px; color:var(--bone-faint); }
+
+/* ============================================================ LAYOUT */
+.deck{
+  display:grid;
+  grid-template-columns: 320px minmax(0,1fr);
+  gap:1px; background:var(--hairline);
+  align-items:start;
+}
+@media (max-width:1080px){ .deck{ grid-template-columns:1fr; } }
+
+.col{ background:var(--ink); padding:clamp(16px,2.4vw,30px); }
+.col.rail{ position:sticky; top:122px; align-self:start; }
+@media (max-width:1080px){ .col.rail{ position:static; } }
+
+.block{ margin-bottom:30px; }
+.block-h{ display:flex; align-items:center; gap:10px; margin-bottom:14px; }
+.block-h .idx{ font-family:var(--serif); font-style:italic; font-size:15px; color:var(--bone-faint); }
+.block-h h2{ font-family:var(--serif); font-size:21px; font-weight:400; letter-spacing:.01em; color:var(--bone); }
+.block-h .rule{ flex:1; height:1px; background:var(--hairline-2); }
+.block-h .tag{ font-size:9.5px; letter-spacing:.16em; color:var(--bone-faint); text-transform:uppercase; }
+
+/* ============================================================ RAIL: component DAG */
+.dag{ background:var(--ink-2); border:1px solid var(--hairline-2); border-radius:var(--r); padding:16px 14px; }
+.dag-flow{ font-size:11px; color:var(--bone-faint); margin-bottom:14px; line-height:1.7; letter-spacing:.02em; }
+.node{
+  display:flex; align-items:center; gap:10px;
+  padding:8px 10px; border-radius:var(--r); border:1px solid transparent;
+  margin:2px 0; cursor:default; transition:.18s; position:relative;
+}
+.node:hover{ background:var(--ink-3); }
+.node .glyph{ width:9px; height:9px; border-radius:2px; background:var(--bone-faint); flex:none; }
+.node .nm{ flex:1; letter-spacing:.02em; }
+.node .meta{ font-size:10px; color:var(--bone-faint); }
+.node.idle .glyph{ background:#4a4234; }
+.node.active{ border-color:var(--amber-d); background:var(--glow-amber); }
+.node.active .glyph{ background:var(--amber); animation:beat 1.6s infinite; box-shadow:0 0 8px var(--amber); }
+.node.active .nm{ color:var(--amber); }
+.node.queued{ border-color:#4a4234; }
+.node.queued .glyph{ background:var(--cyan); }
+.node.queued .nm{ color:var(--cyan); }
+.node .lane{ position:absolute; left:14px; top:-2px; bottom:-2px; width:1px; background:var(--hairline); }
+
+/* round vitals */
+.vitals{ margin-top:18px; }
+.vrow{ display:flex; justify-content:space-between; gap:10px; padding:7px 0; border-bottom:1px dotted var(--hairline); }
+.vrow:last-child{ border-bottom:0; }
+.vrow .k{ color:var(--bone-faint); font-size:11px; letter-spacing:.04em; }
+.vrow .v{ text-align:right; }
+.vrow .v.big{ font-family:var(--serif); font-size:18px; }
+
+/* overseer controls */
+.controls{ margin-top:20px; display:flex; flex-direction:column; gap:8px; }
+.btn{
+  font-family:var(--mono); font-size:11.5px; letter-spacing:.1em; text-transform:uppercase;
+  padding:11px 14px; border-radius:var(--r); cursor:pointer; transition:.16s; text-align:left;
+  display:flex; align-items:center; gap:10px; background:var(--ink-2); color:var(--bone-dim);
+  border:1px solid var(--hairline-2);
+}
+.btn:hover{ background:var(--ink-3); color:var(--bone); border-color:var(--bone-faint); }
+.btn .kbd{ margin-left:auto; font-size:9px; color:var(--bone-faint); border:1px solid var(--hairline-2);
+  padding:1px 5px; border-radius:2px; }
+.btn.primary{ background:var(--glow-green); border-color:var(--green-d); color:var(--green); }
+.btn.primary:hover{ background:#1e3326; border-color:var(--green); }
+.btn.danger{ color:var(--oxide); border-color:var(--oxide-d); }
+.btn.danger:hover{ background:var(--glow-oxide); border-color:var(--oxide); }
+
+/* ============================================================ THE ROUND proposal */
+.proposal{
+  background:
+    radial-gradient(120% 140% at 0% 0%, #211a1080, transparent 60%),
+    var(--ink-2);
+  border:1px solid var(--hairline-2); border-left:3px solid var(--amber);
+  border-radius:var(--r); padding:22px 24px; position:relative; overflow:hidden;
+}
+.proposal::before{ content:"ROUND 007"; position:absolute; top:16px; right:20px;
+  font-family:var(--serif); font-style:italic; font-size:56px; color:#ffffff07; letter-spacing:.02em; }
+.prop-eyebrow{ font-size:10px; letter-spacing:.2em; color:var(--amber); text-transform:uppercase; margin-bottom:8px; }
+.prop-target{ font-family:var(--serif); font-size:30px; line-height:1.12; max-width:30ch; margin-bottom:6px; }
+.prop-target em{ color:var(--cyan); font-style:italic; }
+.prop-rationale{ color:var(--bone-dim); font-size:12px; max-width:62ch; margin-bottom:18px; }
+.prop-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:1px;
+  background:var(--hairline); border:1px solid var(--hairline); border-radius:var(--r); overflow:hidden; }
+.pg-cell{ background:var(--ink-2); padding:12px 14px; }
+.pg-cell .k{ font-size:9.5px; letter-spacing:.16em; color:var(--bone-faint); text-transform:uppercase; margin-bottom:5px; }
+.pg-cell .v{ font-family:var(--serif); font-size:22px; line-height:1; }
+.pg-cell .v small{ font-family:var(--mono); font-size:11px; color:var(--bone-dim); }
+
+/* ============================================================ THE GAUNTLET */
+.gauntlet-wrap{ background:var(--ink-2); border:1px solid var(--hairline-2); border-radius:var(--r); overflow:hidden; }
+.gw-head{ display:flex; align-items:center; gap:12px; padding:13px 18px; border-bottom:1px solid var(--hairline-2);
+  background:linear-gradient(180deg,#1f1a13,transparent); }
+.gw-head .pr{ font-family:var(--serif); font-size:18px; }
+.gw-head .branch{ font-size:11px; color:var(--cyan); }
+.gw-head .verdict{ margin-left:auto; font-size:10px; letter-spacing:.16em; text-transform:uppercase;
+  padding:5px 12px; border-radius:100px; border:1px solid var(--green-d); color:var(--green); background:var(--glow-green); }
+
+.gates{ display:grid; grid-template-columns:repeat(5,1fr); gap:1px; background:var(--hairline); }
+@media (max-width:720px){ .gates{ grid-template-columns:repeat(2,1fr); } }
+.gate{ background:var(--ink-2); padding:18px 14px 16px; position:relative; transition:.2s; min-height:148px;
+  display:flex; flex-direction:column; }
+.gate:hover{ background:var(--ink-3); }
+.gate .gnum{ position:absolute; top:10px; right:12px; font-size:9px; color:var(--bone-faint); }
+.gate .gicon{ width:26px; height:26px; border-radius:50%; display:grid; place-items:center; margin-bottom:11px;
+  border:1.5px solid var(--hairline-2); font-size:13px; }
+.gate .gname{ font-size:11px; letter-spacing:.14em; text-transform:uppercase; color:var(--bone-dim); margin-bottom:3px; }
+.gate .gbar{ font-size:10.5px; color:var(--bone-faint); line-height:1.45; flex:1; }
+.gate .gval{ margin-top:9px; font-size:11px; }
+/* gate states */
+.gate.pass{ border-bottom:2px solid var(--green); }
+.gate.pass .gicon{ border-color:var(--green); color:var(--green); background:var(--glow-green); box-shadow:0 0 12px var(--glow-green); }
+.gate.pass .gname{ color:var(--green); }
+.gate.run{ border-bottom:2px solid var(--amber); }
+.gate.run .gicon{ border-color:var(--amber); color:var(--amber); background:var(--glow-amber); animation:spin 1.4s linear infinite; }
+.gate.run .gname{ color:var(--amber); }
+.gate.fail{ border-bottom:2px solid var(--oxide); background:#1f1411; }
+.gate.fail .gicon{ border-color:var(--oxide); color:var(--oxide); background:var(--glow-oxide); }
+.gate.fail .gname{ color:var(--oxide); }
+.gate.blocked{ opacity:.4; }
+.gate.blocked .gbar{ font-style:italic; }
+@keyframes spin{ to{ transform:rotate(360deg); } }
+/* sweep line that travels the gauntlet */
+.gate.pass::after{ content:""; position:absolute; left:0; right:0; bottom:0; height:2px;
+  background:var(--green); transform-origin:left; animation:sweep .5s ease both; }
+@keyframes sweep{ from{ transform:scaleX(0); } to{ transform:scaleX(1); } }
+
+/* ============================================================ FAN-OUT / PR LANES */
+.lanes{ display:flex; flex-direction:column; gap:12px; }
+.pr-card{ background:var(--ink-2); border:1px solid var(--hairline-2); border-radius:var(--r);
+  overflow:hidden; transition:.18s; }
+.pr-card:hover{ border-color:var(--bone-faint); }
+.pr-card.accepted{ border-left:3px solid var(--green); }
+.pr-card.flagged{ border-left:3px solid var(--oxide); }
+.pr-card.working{ border-left:3px solid var(--amber); }
+.pr-head{ display:flex; align-items:center; gap:14px; padding:14px 18px; cursor:pointer; }
+.pr-head:hover{ background:var(--ink-3); }
+.pr-comp{ font-family:var(--serif); font-size:19px; min-width:108px; }
+.pr-meta{ flex:1; min-width:0; }
+.pr-title{ font-size:12.5px; color:var(--bone); margin-bottom:3px; }
+.pr-sub{ font-size:10.5px; color:var(--bone-faint); display:flex; gap:14px; flex-wrap:wrap; }
+.pr-sub .wt{ color:var(--cyan); }
+.pr-delta{ text-align:right; min-width:118px; }
+.pr-delta .d-num{ font-family:var(--serif); font-size:23px; line-height:1; }
+.pr-delta .d-lbl{ font-size:9px; letter-spacing:.12em; color:var(--bone-faint); text-transform:uppercase; }
+.pr-status{ font-size:9.5px; letter-spacing:.14em; text-transform:uppercase; padding:5px 11px; border-radius:100px;
+  border:1px solid; white-space:nowrap; }
+.st-accepted{ color:var(--green); border-color:var(--green-d); background:var(--glow-green); }
+.st-flagged{ color:var(--oxide); border-color:var(--oxide-d); background:var(--glow-oxide); }
+.st-working{ color:var(--amber); border-color:var(--amber-d); background:var(--glow-amber); }
+.chev{ transition:.2s; color:var(--bone-faint); font-size:16px; }
+.pr-card.open .chev{ transform:rotate(90deg); }
+
+.pr-body{ max-height:0; overflow:hidden; transition:max-height .35s ease; border-top:0 solid var(--hairline); }
+.pr-card.open .pr-body{ max-height:760px; border-top:1px solid var(--hairline); }
+.pr-body-inner{ padding:18px; display:grid; gap:16px; }
+.minigates{ display:flex; gap:7px; flex-wrap:wrap; }
+.mg{ font-size:9.5px; letter-spacing:.08em; text-transform:uppercase; padding:4px 9px; border-radius:2px;
+  border:1px solid var(--hairline-2); color:var(--bone-faint); display:flex; align-items:center; gap:5px; }
+.mg.ok{ color:var(--green); border-color:var(--green-d); }
+.mg.no{ color:var(--oxide); border-color:var(--oxide-d); background:var(--glow-oxide); }
+.mg .tick{ width:5px; height:5px; border-radius:50%; background:currentColor; }
+
+.proftable{ font-size:11px; width:100%; border-collapse:collapse; }
+.proftable th{ text-align:right; font-weight:400; color:var(--bone-faint); font-size:9.5px;
+  letter-spacing:.1em; text-transform:uppercase; padding:5px 10px; border-bottom:1px solid var(--hairline-2); }
+.proftable th:first-child{ text-align:left; }
+.proftable td{ text-align:right; padding:6px 10px; border-bottom:1px dotted var(--hairline); font-variant-numeric:tabular-nums; }
+.proftable td:first-child{ text-align:left; color:var(--bone-dim); }
+.proftable tr:last-child td{ border-bottom:0; }
+
+.note{ font-size:11.5px; color:var(--bone-dim); padding:11px 14px; background:var(--ink);
+  border-left:2px solid var(--hairline-2); border-radius:0 var(--r) var(--r) 0; line-height:1.55; }
+.note.warn{ border-left-color:var(--oxide); color:#e8b6ab; }
+.note .lead{ color:var(--bone-faint); text-transform:uppercase; letter-spacing:.12em; font-size:9.5px; display:block; margin-bottom:4px; }
+.pr-actions{ display:flex; gap:8px; flex-wrap:wrap; }
+
+/* ============================================================ MERGE QUEUE */
+.twocol{ display:grid; grid-template-columns:1fr 1fr; gap:1px; background:var(--hairline);
+  border:1px solid var(--hairline); border-radius:var(--r); overflow:hidden; }
+@media (max-width:880px){ .twocol{ grid-template-columns:1fr; } }
+.tc-pane{ background:var(--ink); padding:18px 20px; }
+.tc-pane h3{ font-family:var(--serif); font-size:16px; font-weight:400; margin-bottom:14px;
+  display:flex; align-items:center; gap:8px; }
+.tc-pane h3 .c{ font-size:10px; color:var(--bone-faint); font-family:var(--mono); }
+
+.queue-item{ display:flex; align-items:center; gap:12px; padding:11px 12px; border-radius:var(--r);
+  margin-bottom:7px; border:1px solid var(--hairline); background:var(--ink-2); }
+.queue-item .qn{ width:20px; height:20px; border-radius:50%; display:grid; place-items:center;
+  font-size:10px; border:1px solid var(--hairline-2); color:var(--bone-faint); flex:none; }
+.queue-item.next{ border-color:var(--green-d); background:var(--glow-green); }
+.queue-item.next .qn{ border-color:var(--green); color:var(--green); }
+.queue-item.held{ opacity:.55; }
+.queue-item .qbody{ flex:1; }
+.queue-item .qcomp{ font-size:12px; }
+.queue-item .qst{ font-size:10px; color:var(--bone-faint); }
+.queue-item .qtag{ font-size:9px; letter-spacing:.12em; text-transform:uppercase; color:var(--bone-faint); }
+
+.reval{ margin-top:14px; padding:12px; border:1px dashed var(--hairline-2); border-radius:var(--r); font-size:11px; }
+.reval .rv-h{ font-size:9.5px; letter-spacing:.14em; text-transform:uppercase; color:var(--bone-faint); margin-bottom:8px; }
+.reval-row{ display:flex; justify-content:space-between; padding:3px 0; }
+
+/* ledgers */
+.ledger-item{ padding:11px 0; border-bottom:1px dotted var(--hairline); }
+.ledger-item:last-child{ border-bottom:0; }
+.li-top{ display:flex; align-items:baseline; gap:10px; }
+.li-r{ font-family:var(--serif); font-size:14px; color:var(--bone-faint); min-width:54px; }
+.li-comp{ font-size:12px; }
+.li-verdict{ margin-left:auto; font-size:9px; letter-spacing:.12em; text-transform:uppercase; }
+.li-verdict.acc{ color:var(--green); }
+.li-verdict.rej{ color:var(--oxide); }
+.li-detail{ font-size:10.5px; color:var(--bone-faint); margin-top:3px; padding-left:64px; }
+.li-detail b{ color:var(--bone-dim); font-weight:500; }
+
+.req-item{ padding:12px 14px; background:var(--ink-2); border:1px solid var(--hairline-2);
+  border-radius:var(--r); margin-bottom:9px; }
+.req-flow{ font-size:12px; margin-bottom:5px; }
+.req-flow .arrow{ color:var(--amber); margin:0 6px; }
+.req-why{ font-size:10.5px; color:var(--bone-faint); }
+.req-status{ font-size:9px; letter-spacing:.12em; text-transform:uppercase; float:right;
+  padding:2px 8px; border-radius:100px; border:1px solid var(--amber-d); color:var(--amber); }
+
+/* docs agent strip */
+.docs-strip{ display:flex; align-items:center; gap:14px; padding:14px 18px; background:var(--ink-2);
+  border:1px solid var(--hairline-2); border-left:3px solid var(--violet); border-radius:var(--r); }
+.docs-strip .di{ width:30px; height:30px; border-radius:50%; display:grid; place-items:center;
+  border:1.5px solid var(--violet); color:var(--violet); font-size:14px; flex:none; }
+.docs-strip .dtxt{ flex:1; font-size:11.5px; color:var(--bone-dim); }
+.docs-strip .dtxt b{ color:var(--violet); font-weight:500; }
+.docs-strip .dstate{ font-size:9.5px; letter-spacing:.14em; text-transform:uppercase; color:var(--bone-faint); }
+
+/* footer */
+footer{ padding:30px clamp(16px,3vw,40px) 50px; border-top:1px solid var(--hairline);
+  color:var(--bone-faint); font-size:10.5px; letter-spacing:.04em; display:flex; gap:24px; flex-wrap:wrap; }
+footer .heartbeat{ display:inline-flex; align-items:center; gap:7px; }
+footer .hb-dot{ width:6px; height:6px; border-radius:50%; background:var(--green); animation:beat 2.4s infinite; }
+
+/* load reveal */
+.reveal{ opacity:0; transform:translateY(14px); animation:rise .6s cubic-bezier(.2,.7,.3,1) forwards; }
+@keyframes rise{ to{ opacity:1; transform:none; } }
+</style>
+</head>
+<body>
+
+<!-- ===================================================== MASTHEAD -->
+<header class="masthead">
+  <div class="mast-top">
+    <div>
+      <div class="wordmark"><span class="bt">bt</span> <span class="sub">improvement loop</span></div>
+      <div class="mast-tag">seven components · improved behind their APIs · every change gated</div>
+    </div>
+    <div class="mast-spacer"></div>
+    <div class="round-pill"><span class="dot"></span> AWAITING ADJUDICATION</div>
+    <div class="mast-stat">
+      <div class="lbl">cumulative landed</div>
+      <div class="val tnum">+6 <span style="font-size:13px;color:var(--bone-faint)">rounds</span></div>
+    </div>
+    <div class="mast-stat">
+      <div class="lbl">net sharpe · golden</div>
+      <div class="val tnum green">1.137</div>
+    </div>
+  </div>
+
+  <!-- ratchet: only ever advances right -->
+  <div class="ratchet">
+    <span class="rk-lbl">ratchet</span>
+    <div class="ratchet-track" id="ratchet"></div>
+    <span class="rk-lbl" style="color:var(--green)">one tooth / round →</span>
+  </div>
+</header>
+
+<!-- ===================================================== DECK -->
+<div class="deck">
+
+  <!-- ----------------------------------- LEFT RAIL -->
+  <aside class="col rail reveal" style="animation-delay:.05s">
+
+    <div class="block">
+      <div class="block-h"><span class="idx">i</span><h2>the machine</h2><span class="rule"></span></div>
+      <div class="dag">
+        <div class="dag-flow">
+          data → signals → models → portfolio → backtest → analysis<br>
+          <span class="faint">&nbsp;&nbsp;&nbsp;&nbsp;↑ etl ingests&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;↑ profiling measures it all</span>
+        </div>
+        <div class="node idle"><span class="glyph"></span><span class="nm">etl</span><span class="meta">stable</span></div>
+        <div class="node queued"><span class="glyph"></span><span class="nm">signals</span><span class="meta">PR #43 · flagged</span></div>
+        <div class="node idle"><span class="glyph"></span><span class="nm">models</span><span class="meta">stable</span></div>
+        <div class="node idle"><span class="glyph"></span><span class="nm">analysis</span><span class="meta">stable · req open</span></div>
+        <div class="node active"><span class="glyph"></span><span class="nm">portfolio</span><span class="meta">PR #42 · @gate 5</span></div>
+        <div class="node idle"><span class="glyph"></span><span class="nm">backtest</span><span class="meta">stable</span></div>
+        <div class="node idle"><span class="glyph"></span><span class="nm">profiling</span><span class="meta">stable</span></div>
+      </div>
+    </div>
+
+    <div class="block">
+      <div class="block-h"><span class="idx">ii</span><h2>round vitals</h2><span class="rule"></span></div>
+      <div class="vitals">
+        <div class="vrow"><span class="k">round</span><span class="v big">007</span></div>
+        <div class="vrow"><span class="k">target metric</span><span class="v">portfolio <span class="cyan">elapsed_s</span> p50</span></div>
+        <div class="vrow"><span class="k">@ grid point</span><span class="v">n_assets = 200</span></div>
+        <div class="vrow"><span class="k">baseline (golden)</span><span class="v big tnum">1.84<small class="faint">s</small></span></div>
+        <div class="vrow"><span class="k">eval tolerance</span><span class="v tnum">1e-6 rel</span></div>
+        <div class="vrow"><span class="k">agents dispatched</span><span class="v tnum">2 · parallel</span></div>
+        <div class="vrow"><span class="k">PRs open</span><span class="v tnum">2</span></div>
+      </div>
+    </div>
+
+    <div class="block">
+      <div class="block-h"><span class="idx">iii</span><h2>overseer</h2><span class="rule"></span></div>
+      <div class="controls">
+        <button class="btn primary" id="mergeBtn">▸ merge PR #42 <span class="kbd">M</span></button>
+        <button class="btn">⟲ re-run gates on tip <span class="kbd">R</span></button>
+        <button class="btn danger">⤺ revert flagged PR #43 <span class="kbd">⌫</span></button>
+        <button class="btn">＋ propose next target <span class="kbd">N</span></button>
+        <button class="btn">⏸ hold loop <span class="kbd">H</span></button>
+      </div>
+    </div>
+
+  </aside>
+
+  <!-- ----------------------------------- MAIN -->
+  <main class="col">
+
+    <!-- THE ROUND -->
+    <section class="block reveal" style="animation-delay:.12s">
+      <div class="block-h"><span class="idx">01</span><h2>the round</h2><span class="rule"></span><span class="tag">head agent · proposal</span></div>
+      <div class="proposal">
+        <div class="prop-eyebrow">target · single thing this round</div>
+        <div class="prop-target">Break the optimizer's <em>super-linear</em> scaling on n_assets.</div>
+        <div class="prop-rationale">
+          The harness fit flagged portfolio at <span class="cyan">n_assets^2.1</span> — the mean-variance solve
+          re-factorizes Σ = B·F·Bᵀ + D from scratch every rebalance. Hypothesis: cache the Cholesky of the
+          factor covariance across rebalances within a fold. Additive-only; the public optimizer signature is unchanged.
+        </div>
+        <div class="prop-grid">
+          <div class="pg-cell"><div class="k">optimizes</div><div class="v">elapsed_s <small>p50</small></div></div>
+          <div class="pg-cell"><div class="k">before</div><div class="v tnum">1.84<small>s</small></div></div>
+          <div class="pg-cell"><div class="k">scaling exponent</div><div class="v tnum">2.1<small> → target ≤1.4</small></div></div>
+          <div class="pg-cell"><div class="k">eval golden</div><div class="v">held <small>1e-6</small></div></div>
+          <div class="pg-cell"><div class="k">dedup check</div><div class="v green" style="font-size:15px">clean ✓</div></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- THE GAUNTLET -->
+    <section class="block reveal" style="animation-delay:.2s">
+      <div class="block-h"><span class="idx">02</span><h2>the gauntlet</h2><span class="rule"></span><span class="tag">PR #42 · five gates · all must pass</span></div>
+      <div class="gauntlet-wrap">
+        <div class="gw-head">
+          <span class="pr">PR #42</span>
+          <span class="branch">improve/portfolio-chol-cache</span>
+          <span class="verdict" id="gauntletVerdict">5 / 5 · ADJUDICATE</span>
+        </div>
+        <div class="gates" id="gates">
+          <div class="gate pass" data-cmd="uv run ruff check && ruff format --check">
+            <span class="gnum">01</span><div class="gicon">✓</div>
+            <div class="gname">lint</div>
+            <div class="gbar">ruff clean · warnings-as-errors · per-commit by committer</div>
+            <div class="gval green">All checks passed</div>
+          </div>
+          <div class="gate pass" data-cmd="uv run ty check">
+            <span class="gnum">02</span><div class="gicon">✓</div>
+            <div class="gname">types</div>
+            <div class="gbar">ty strict · error-on-warning · zero suppression markers added</div>
+            <div class="gval green">0 diagnostics</div>
+          </div>
+          <div class="gate pass" data-cmd="uv run pytest -q  +  tests/integration/">
+            <span class="gnum">03</span><div class="gicon">✓</div>
+            <div class="gname">correctness</div>
+            <div class="gbar">unit + integration · cross-component contract holds</div>
+            <div class="gval green tnum">458 passed</div>
+          </div>
+          <div class="gate pass" data-cmd="uv run main.py → check_regressions vs baseline">
+            <span class="gnum">04</span><div class="gicon">✓</div>
+            <div class="gname">profiling</div>
+            <div class="gbar">target improved · no other stage regressed past threshold</div>
+            <div class="gval green tnum">1.84 → 0.71s · −61%</div>
+          </div>
+          <div class="gate pass" data-cmd="run_production_pipeline → PipelineSummary diff vs golden">
+            <span class="gnum">05</span><div class="gicon">✓</div>
+            <div class="gname">evaluation</div>
+            <div class="gbar">golden diff within 1e-6 · numbers did not move</div>
+            <div class="gval green tnum">Δ 4e-9 · held</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- FAN-OUT -->
+    <section class="block reveal" style="animation-delay:.28s">
+      <div class="block-h"><span class="idx">03</span><h2>the fan-out</h2><span class="rule"></span><span class="tag">one worktree per agent · stay in lane</span></div>
+      <div class="lanes">
+
+        <!-- portfolio PR #42 -->
+        <article class="pr-card accepted" data-pr>
+          <div class="pr-head">
+            <span class="pr-comp">portfolio</span>
+            <div class="pr-meta">
+              <div class="pr-title">Cache factor-covariance Cholesky across rebalances within a fold</div>
+              <div class="pr-sub">
+                <span>PR #42</span>
+                <span class="wt">⌥ wt: improve/portfolio-chol-cache</span>
+                <span>+118 −41 · 1 file + ledger</span>
+              </div>
+            </div>
+            <div class="pr-delta">
+              <div class="d-num green tnum">−61%</div>
+              <div class="d-lbl">elapsed p50</div>
+            </div>
+            <span class="pr-status st-accepted">gates 5/5</span>
+            <span class="chev">›</span>
+          </div>
+          <div class="pr-body"><div class="pr-body-inner">
+            <div class="minigates">
+              <span class="mg ok"><span class="tick"></span>lint</span>
+              <span class="mg ok"><span class="tick"></span>types</span>
+              <span class="mg ok"><span class="tick"></span>458 tests</span>
+              <span class="mg ok"><span class="tick"></span>profiling</span>
+              <span class="mg ok"><span class="tick"></span>eval golden</span>
+            </div>
+            <table class="proftable">
+              <thead><tr><th>stage · p50</th><th>before</th><th>after</th><th>Δ</th></tr></thead>
+              <tbody>
+                <tr><td>portfolio @ n=100</td><td>0.46s</td><td>0.22s</td><td class="green">−52%</td></tr>
+                <tr><td>portfolio @ n=200</td><td>1.84s</td><td>0.71s</td><td class="green">−61%</td></tr>
+                <tr><td>portfolio @ n=400</td><td>7.30s</td><td>2.05s</td><td class="green">−72%</td></tr>
+                <tr><td>scaling exponent</td><td>n^2.1</td><td>n^1.36</td><td class="green">super→near-linear</td></tr>
+              </tbody>
+            </table>
+            <div class="note"><span class="lead">why it should merge</span>
+              The Cholesky of B·F·Bᵀ+D is rebuilt every rebalance though F and B are fold-constant; caching it
+              turns the per-rebalance solve from a factorization into a triangular back-substitution. Eval golden
+              holds to 4e-9 — pure speed, no number moved. Revert is one merge-commit; the cache lives entirely
+              behind the unchanged optimizer signature.</div>
+            <div class="pr-actions">
+              <button class="btn primary" style="flex:0" id="mergeBtn2">▸ merge first</button>
+              <button class="btn" style="flex:0">view writeup</button>
+              <button class="btn" style="flex:0">open worktree diff</button>
+            </div>
+          </div></div>
+        </article>
+
+        <!-- signals PR #43 — flagged on eval -->
+        <article class="pr-card flagged" data-pr>
+          <div class="pr-head">
+            <span class="pr-comp">signals</span>
+            <div class="pr-meta">
+              <div class="pr-title">Vectorize cross-sectional IC over the horizon grid</div>
+              <div class="pr-sub">
+                <span>PR #43</span>
+                <span class="wt">⌥ wt: improve/signals-ic-vectorize</span>
+                <span>+64 −37 · 1 file</span>
+              </div>
+            </div>
+            <div class="pr-delta">
+              <div class="d-num oxide tnum">Δ 3e-3</div>
+              <div class="d-lbl">golden moved</div>
+            </div>
+            <span class="pr-status st-flagged">gate 5 fail</span>
+            <span class="chev">›</span>
+          </div>
+          <div class="pr-body"><div class="pr-body-inner">
+            <div class="minigates">
+              <span class="mg ok"><span class="tick"></span>lint</span>
+              <span class="mg ok"><span class="tick"></span>types</span>
+              <span class="mg ok"><span class="tick"></span>458 tests</span>
+              <span class="mg ok"><span class="tick"></span>profiling −38%</span>
+              <span class="mg no"><span class="tick"></span>eval golden</span>
+            </div>
+            <div class="note warn"><span class="lead">why the gauntlet rejected it</span>
+              Profiling won (−38% on signals.ic) but the evaluation gate caught <b>ic_neutralized</b> shifting
+              0.041 → 0.044 — past the 1e-6 tolerance with no correctness justification in the writeup. A speedup
+              that moves Sharpe is a regression wearing a profiling win's clothes. The vectorized path changes the
+              spearman tie-handling; the golden diff caught it mechanically. <b>Held — does not merge.</b>
+            </div>
+            <table class="proftable">
+              <thead><tr><th>PipelineSummary</th><th>golden</th><th>this PR</th><th>Δ</th></tr></thead>
+              <tbody>
+                <tr><td>ic_raw</td><td>0.0517</td><td>0.0517</td><td class="green">held</td></tr>
+                <tr><td>ic_neutralized</td><td>0.0410</td><td>0.0440</td><td class="oxide">+3e-3 ✗</td></tr>
+                <tr><td>wf_mean_ic</td><td>0.0288</td><td>0.0291</td><td class="oxide">+3e-4 ✗</td></tr>
+                <tr><td>net_sharpe</td><td>1.137</td><td>1.149</td><td class="oxide">moved ✗</td></tr>
+              </tbody>
+            </table>
+            <div class="pr-actions">
+              <button class="btn danger" style="flex:0">request correctness justification</button>
+              <button class="btn" style="flex:0">record rejection → IMPROVEMENTS.md</button>
+            </div>
+          </div></div>
+        </article>
+
+      </div>
+    </section>
+
+    <!-- MERGE QUEUE + RE-VALIDATION -->
+    <section class="block reveal" style="animation-delay:.36s">
+      <div class="block-h"><span class="idx">04</span><h2>serial merge</h2><span class="rule"></span><span class="tag">one at a time · re-validate the post-merge tree</span></div>
+      <div class="twocol">
+        <div class="tc-pane">
+          <h3>merge queue <span class="c">green-on-branch ≠ green-after-sibling</span></h3>
+          <div class="queue-item next">
+            <span class="qn">1</span>
+            <div class="qbody"><div class="qcomp">portfolio · PR #42</div><div class="qst">5/5 gates · ready to merge first</div></div>
+            <span class="qtag">next ▸</span>
+          </div>
+          <div class="queue-item held">
+            <span class="qn">2</span>
+            <div class="qbody"><div class="qcomp">signals · PR #43</div><div class="qst">eval gate failed · will not enter queue</div></div>
+            <span class="qtag oxide">held</span>
+          </div>
+          <div class="note" style="margin-top:6px">After #42 merges, the gauntlet re-runs on the
+            post-merge <b>main</b>; only a green re-validation clears the next merge. Any regression → <span class="oxide">git revert</span> the merge commit.</div>
+        </div>
+        <div class="tc-pane">
+          <h3>post-merge re-validation <span class="c">on main, after each merge</span></h3>
+          <div class="reval">
+            <div class="rv-h">last completed · round 006 → main</div>
+            <div class="reval-row"><span class="dim">correctness</span><span class="green tnum">458 passed</span></div>
+            <div class="reval-row"><span class="dim">profiling · models</span><span class="green tnum">no stage regressed</span></div>
+            <div class="reval-row"><span class="dim">eval golden diff</span><span class="green tnum">within 1e-6</span></div>
+            <div class="reval-row"><span class="dim">baseline ratcheted</span><span class="green">stage_baselines ✓</span></div>
+          </div>
+          <div class="docs-strip" style="margin-top:14px">
+            <div class="di">¶</div>
+            <div class="dtxt"><b>docs agent</b> reconciles README · WORKING_NOTES · DECISIONS after the merge stands, and flags stale <b>~/syl wiki</b> pages — never edits them.</div>
+            <div class="dstate">queued</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- LEDGERS -->
+    <section class="block reveal" style="animation-delay:.44s">
+      <div class="block-h"><span class="idx">05</span><h2>the ledgers</h2><span class="rule"></span><span class="tag">append-only memory · the loop stays honest</span></div>
+      <div class="twocol">
+
+        <div class="tc-pane">
+          <h3>IMPROVEMENTS.md <span class="c">round log · dedup source</span></h3>
+          <div class="ledger-item">
+            <div class="li-top"><span class="li-r">007</span><span class="li-comp">portfolio · Cholesky cache</span><span class="li-verdict acc">pending merge</span></div>
+            <div class="li-detail">elapsed p50 <b>1.84s → 0.71s</b> · n^2.1→n^1.36 · golden held</div>
+          </div>
+          <div class="ledger-item">
+            <div class="li-top"><span class="li-r">006</span><span class="li-comp">models · purged-CV index reuse</span><span class="li-verdict acc">accepted</span></div>
+            <div class="li-detail">wf build p50 <b>0.62s → 0.40s</b> · #39 · golden held</div>
+          </div>
+          <div class="ledger-item">
+            <div class="li-top"><span class="li-r">005</span><span class="li-comp">analysis · rolling metrics</span><span class="li-verdict rej">rejected</span></div>
+            <div class="li-detail">eval moved Sortino w/o justification · gate 5 · don't re-attempt</div>
+          </div>
+          <div class="ledger-item">
+            <div class="li-top"><span class="li-r">004</span><span class="li-comp">etl · PIT as-of join</span><span class="li-verdict acc">accepted</span></div>
+            <div class="li-detail">load p50 <b>−24%</b> · #34 · golden held</div>
+          </div>
+          <div class="ledger-item">
+            <div class="li-top"><span class="li-r">003</span><span class="li-comp">backtest · share accounting</span><span class="li-verdict acc">accepted</span></div>
+            <div class="li-detail">sim p50 <b>−17%</b> · #29 · cost_drag held</div>
+          </div>
+        </div>
+
+        <div class="tc-pane">
+          <h3>API_REQUESTS.md <span class="c">inter-agent · additive only</span></h3>
+          <div class="req-item">
+            <span class="req-status">open</span>
+            <div class="req-flow">analysis <span class="arrow">←needs—</span> models</div>
+            <div class="req-why">per-fold timestamps to align attribution to the walk-forward split. Producer picks it up next round; closed only when the field lands additively + analysis's gate confirms.</div>
+          </div>
+          <div class="req-item" style="opacity:.6">
+            <span class="req-status" style="border-color:var(--green-d);color:var(--green)">done</span>
+            <div class="req-flow">portfolio <span class="arrow" style="color:var(--green)">←got—</span> signals</div>
+            <div class="req-why">combined-score column landed as additive field (default-None) · round 006 · consumer gate green.</div>
+          </div>
+          <div class="note" style="margin-top:12px">
+            <span class="lead">additive discipline</span>
+            no exported symbol removed or renamed, ever. New params/fields take defaults — the POC path runs byte-for-byte.
+            A contract break surfaces at the correctness gate, where the integration suite imports across the boundary.
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<footer>
+  <span class="heartbeat"><span class="hb-dot"></span> loop heartbeat · last harness run 2m ago</span>
+  <span>golden: net_sharpe 1.137 · cost_drag 0.18% · wf_ic 0.0288</span>
+  <span>gates: lint · types · correctness · profiling · evaluation</span>
+  <span class="faint">overseer deck — concept · drives on mock data mirroring the live ledgers</span>
+</footer>
+
+<script>
+// ---- ratchet strip: render landed/rejected/active teeth ----------------
+const ratchet = document.getElementById('ratchet');
+const TEETH = [
+  {n:'001',s:'landed'},{n:'002',s:'landed'},{n:'003',s:'landed'},
+  {n:'004',s:'landed'},{n:'005',s:'rejected'},{n:'006',s:'landed'},
+  {n:'007',s:'active'},{n:'008',s:''},{n:'009',s:''},{n:'010',s:''},
+  {n:'011',s:''},{n:'012',s:''},
+];
+TEETH.forEach(t=>{
+  const d=document.createElement('div');
+  d.className='tooth'+(t.s?(' '+t.s):'');
+  d.innerHTML=`<span class="tn">${t.n}</span>`;
+  ratchet.appendChild(d);
+});
+
+// ---- PR cards expand/collapse -----------------------------------------
+document.querySelectorAll('[data-pr]').forEach(card=>{
+  card.querySelector('.pr-head').addEventListener('click',()=>card.classList.toggle('open'));
+});
+// open the adjudication-ready PR by default
+document.querySelector('.pr-card.accepted')?.classList.add('open');
+
+// ---- gate hover → reveal the command in the verdict pill --------------
+const verdict=document.getElementById('gauntletVerdict');
+const defaultVerdict=verdict.textContent;
+document.querySelectorAll('.gate').forEach(g=>{
+  g.addEventListener('mouseenter',()=>{ verdict.textContent='$ '+g.dataset.cmd; verdict.style.fontSize='10px';});
+  g.addEventListener('mouseleave',()=>{ verdict.textContent=defaultVerdict; verdict.style.fontSize='';});
+});
+
+// ---- merge action: advance the ratchet one tooth (one direction only) --
+function landRound(){
+  const active=document.querySelector('.tooth.active');
+  if(!active) return;
+  active.classList.remove('active'); active.classList.add('landed');
+  const teeth=[...document.querySelectorAll('.tooth')];
+  const i=teeth.indexOf(active);
+  if(teeth[i+1]) teeth[i+1].classList.add('active');
+  document.querySelector('.round-pill').innerHTML='<span class="dot"></span> RE-VALIDATING MAIN';
+  document.querySelector('.round-pill').style.borderColor='var(--green-d)';
+  document.querySelector('.round-pill').style.color='var(--green)';
+  document.querySelector('.round-pill').style.background='var(--glow-green)';
+  verdict.textContent='MERGED ✓'; verdict.style.borderColor='var(--green)';
+  const q=document.querySelector('.queue-item.next');
+  if(q){ q.querySelector('.qst').textContent='merged → re-validating post-merge tree'; }
+}
+document.getElementById('mergeBtn').addEventListener('click',landRound);
+document.getElementById('mergeBtn2')?.addEventListener('click',landRound);
+
+// ---- keyboard shortcuts (overseer muscle memory) ----------------------
+document.addEventListener('keydown',e=>{
+  if(e.key==='m'||e.key==='M') landRound();
+});
+</script>
+</body>
+</html>
