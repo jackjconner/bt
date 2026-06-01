@@ -313,111 +313,13 @@ def _build_quadratic_cost(
     return P, q
 
 
-def _build_epigraph_rows(
-    n: int,
-    w0_arr: np.ndarray,
-    no_trade_band: float,
-) -> tuple[list[sp.spmatrix], list[np.ndarray], list[np.ndarray]]:
-    """Build the three epigraph-related constraint blocks for the t variables.
-
-    Returns three (A_block, l_part, u_part) triplets (as parallel lists)
-    corresponding to:
-      - t_i ≥ 0
-      - w_i - t_i ≤ w0_i + band   (upper epigraph side)
-      - -w_i - t_i ≤ -w0_i + band  (lower epigraph side)
-    """
-    band = float(no_trade_band)
-    A_blocks: list[sp.spmatrix] = []
-    l_parts: list[np.ndarray] = []
-    u_parts: list[np.ndarray] = []
-
-    # t_i ≥ 0  (n rows)
-    A_blocks.append(sp.hstack([sp.csr_matrix((n, n)), sp.eye(n, format="csr")]))
-    l_parts.append(np.zeros(n))
-    u_parts.append(np.full(n, _INF))
-
-    # Epigraph upper side: w_i - t_i ≤ w0_i + band
-    A_blocks.append(sp.hstack([sp.eye(n, format="csr"), -sp.eye(n, format="csr")]))
-    l_parts.append(np.full(n, -_INF))
-    u_parts.append(w0_arr + band)
-
-    # Epigraph lower side: -w_i - t_i ≤ -w0_i + band
-    A_blocks.append(sp.hstack([-sp.eye(n, format="csr"), -sp.eye(n, format="csr")]))
-    l_parts.append(np.full(n, -_INF))
-    u_parts.append(-w0_arr + band)
-
-    return A_blocks, l_parts, u_parts
-
-
-def _build_sector_rows(
-    spec: ConstraintSpec,
-    n: int,
-) -> tuple[list[sp.spmatrix], list[np.ndarray], list[np.ndarray]]:
-    """Build one constraint row per active sector bound.
-
-    Sector constraints are linear in w only; t columns are zero.
-    """
-    A_blocks: list[sp.spmatrix] = []
-    l_parts: list[np.ndarray] = []
-    u_parts: list[np.ndarray] = []
-
-    if spec.sector_map is None:
-        return A_blocks, l_parts, u_parts
-
-    sectors = np.asarray(spec.sector_map)
-    for s in np.unique(sectors):
-        mask = (sectors == s).astype(float)
-        s_int = int(s)
-        if s_int in spec.sector_min or s_int in spec.sector_max:
-            row_w = sp.csr_matrix(mask.reshape(1, n))
-            row_t = sp.csr_matrix((1, n))
-            row = sp.hstack([row_w, row_t])
-            lo_s = float(spec.sector_min.get(s_int, -_INF))
-            hi_s = float(spec.sector_max.get(s_int, _INF))
-            A_blocks.append(row)
-            l_parts.append(np.array([lo_s]))
-            u_parts.append(np.array([hi_s]))
-
-    return A_blocks, l_parts, u_parts
-
-
-def _build_gross_rows(
-    spec: ConstraintSpec,
-    n: int,
-) -> tuple[list[sp.spmatrix], list[np.ndarray], list[np.ndarray]]:
-    """Build constraint rows for gross exposure bounds (long-only simplification).
-
-    For long-only portfolios Σ|w_i| = Σ w_i, so gross bounds reduce to linear
-    constraints on w. Long-short gross bounds require a separate epigraph; that
-    path is not exercised here (production relies on per-asset bounds).
-    """
-    A_blocks: list[sp.spmatrix] = []
-    l_parts: list[np.ndarray] = []
-    u_parts: list[np.ndarray] = []
-
-    row_w = sp.csr_matrix(np.ones((1, n)))
-    row_t = sp.csr_matrix((1, n))
-    row = sp.hstack([row_w, row_t])
-
-    if spec.min_gross is not None:
-        A_blocks.append(row)
-        l_parts.append(np.array([float(spec.min_gross)]))
-        u_parts.append(np.array([_INF]))
-
-    if spec.max_gross is not None:
-        A_blocks.append(row)
-        l_parts.append(np.array([-_INF]))
-        u_parts.append(np.array([float(spec.max_gross)]))
-
-    return A_blocks, l_parts, u_parts
-
-
 def _build_constraint_matrix(
     spec: ConstraintSpec,
     n: int,
     cost_scale: float,
     w0_arr: np.ndarray,
     no_trade_band: float,
+    n_cols: int | None = None,
 ) -> tuple[sp.csc_matrix, np.ndarray, np.ndarray]:
     """Assemble the full OSQP constraint matrix A and bound vectors l, u.
 
@@ -431,47 +333,98 @@ def _build_constraint_matrix(
         [gross rows, 0–2]
 
     When cost_scale == 0 the t-variable and epigraph rows are omitted.
+
+    The matrix is assembled directly from (row, col, value) triplets into a
+    single CSC, rather than building one sparse block per constraint group and
+    stacking them.  Every block here is a (shifted) identity or a dense row, so
+    its nonzeros are known in closed form; emitting them as triplets avoids the
+    per-block ``eye``/``hstack``/``vstack`` allocations (the dominant cost of the
+    QP assembly at production breadth) while producing a byte-identical A.
+
+    ``n_cols`` widens the column space beyond ``2n`` (the factor-model path adds
+    ``k`` auxiliary ``y`` columns); the extra columns stay empty here and are
+    populated by the caller's factor-equality rows.
     """
-    A_blocks: list[sp.spmatrix] = []
+    band = float(no_trade_band)
+    ncol = 2 * n if n_cols is None else n_cols
+    ar = np.arange(n)
+
+    rows: list[np.ndarray] = []
+    cols: list[np.ndarray] = []
+    data: list[np.ndarray] = []
     l_parts: list[np.ndarray] = []
     u_parts: list[np.ndarray] = []
+    row_off = 0
 
-    # 1. Per-asset weight bounds: w_i ∈ [lb_i, ub_i]  (n rows)
+    def add(row_idx: np.ndarray, col_idx: np.ndarray, val: np.ndarray) -> None:
+        rows.append(row_idx)
+        cols.append(col_idx)
+        data.append(val)
+
+    # 1. Per-asset weight bounds: w_i ∈ [lb_i, ub_i]  (n rows; I on w cols)
     bounds_list = spec.per_asset_bounds()
     lb = np.array([b[0] for b in bounds_list])
     ub = np.array([b[1] for b in bounds_list])
-    A_blocks.append(sp.hstack([sp.eye(n, format="csr"), sp.csr_matrix((n, n))]))
+    add(ar, ar, np.ones(n))
     l_parts.append(lb)
     u_parts.append(ub)
+    row_off += n
 
-    # 2. Net-exposure equality: Σ w_i = net_exposure  (1 row)
-    ones_w = sp.csr_matrix(np.ones((1, n)))
-    zeros_t = sp.csr_matrix((1, n))
-    A_blocks.append(sp.hstack([ones_w, zeros_t]))
+    # 2. Net-exposure equality: Σ w_i = net_exposure  (1 row; 1ᵀ on w cols)
+    add(np.full(n, row_off), ar, np.ones(n))
     ne = float(spec.net_exposure)
     l_parts.append(np.array([ne]))
     u_parts.append(np.array([ne]))
+    row_off += 1
 
     # 3–5. Epigraph blocks (only when cost penalty is active)
     if cost_scale > 0.0:
-        epi_blocks, epi_l, epi_u = _build_epigraph_rows(n, w0_arr, no_trade_band)
-        A_blocks.extend(epi_blocks)
-        l_parts.extend(epi_l)
-        u_parts.extend(epi_u)
+        # t_i ≥ 0  (I on t cols)
+        add(row_off + ar, n + ar, np.ones(n))
+        l_parts.append(np.zeros(n))
+        u_parts.append(np.full(n, _INF))
+        row_off += n
+        # upper side: w_i - t_i ≤ w0_i + band
+        add(row_off + ar, ar, np.ones(n))
+        add(row_off + ar, n + ar, -np.ones(n))
+        l_parts.append(np.full(n, -_INF))
+        u_parts.append(w0_arr + band)
+        row_off += n
+        # lower side: -w_i - t_i ≤ -w0_i + band
+        add(row_off + ar, ar, -np.ones(n))
+        add(row_off + ar, n + ar, -np.ones(n))
+        l_parts.append(np.full(n, -_INF))
+        u_parts.append(-w0_arr + band)
+        row_off += n
 
-    # 6. Sector constraints
-    sec_blocks, sec_l, sec_u = _build_sector_rows(spec, n)
-    A_blocks.extend(sec_blocks)
-    l_parts.extend(sec_l)
-    u_parts.extend(sec_u)
+    # 6. Sector constraints: one [lo, hi] row per active sector bound (w only)
+    if spec.sector_map is not None:
+        sectors = np.asarray(spec.sector_map)
+        for s in np.unique(sectors):
+            s_int = int(s)
+            if s_int in spec.sector_min or s_int in spec.sector_max:
+                members = np.nonzero(sectors == s)[0]
+                add(np.full(members.shape[0], row_off), members, np.ones(members.shape[0]))
+                l_parts.append(np.array([float(spec.sector_min.get(s_int, -_INF))]))
+                u_parts.append(np.array([float(spec.sector_max.get(s_int, _INF))]))
+                row_off += 1
 
-    # 7. Gross exposure
-    gross_blocks, gross_l, gross_u = _build_gross_rows(spec, n)
-    A_blocks.extend(gross_blocks)
-    l_parts.extend(gross_l)
-    u_parts.extend(gross_u)
+    # 7. Gross exposure (long-only simplification: Σ|w| = Σw → linear on w)
+    if spec.min_gross is not None:
+        add(np.full(n, row_off), ar, np.ones(n))
+        l_parts.append(np.array([float(spec.min_gross)]))
+        u_parts.append(np.array([_INF]))
+        row_off += 1
+    if spec.max_gross is not None:
+        add(np.full(n, row_off), ar, np.ones(n))
+        l_parts.append(np.array([-_INF]))
+        u_parts.append(np.array([float(spec.max_gross)]))
+        row_off += 1
 
-    A = sp.vstack(A_blocks).tocsc()
+    A = sp.csc_matrix(
+        (np.concatenate(data), (np.concatenate(rows), np.concatenate(cols))),
+        shape=(row_off, ncol),
+    )
     l_vec = np.concatenate(l_parts)
     u_vec = np.concatenate(u_parts)
     return A, l_vec, u_vec
@@ -663,24 +616,32 @@ def _build_constraint_matrix_factor(
         [existing rows: per-asset bounds, net-exposure, epigraph, sector, gross]
         k rows: -Bᵀ w + I_k y = 0    (y = Bᵀw)
     """
-    # --- reuse the existing constraint builder for the [w; t] sub-problem ---
-    A_wt, l_wt, u_wt = _build_constraint_matrix(spec, n, cost_scale, w0_arr, no_trade_band)
-    # A_wt is (m × 2n); widen it to (m × (2n+k)) by appending zero y-columns.
+    # Build the [w; t] sub-problem directly into the widened (2n+k)-column space
+    # (the extra k y-columns stay empty here), then append the k factor-equality
+    # rows as triplets.  This keeps the whole assembly on the triplet path — no
+    # hstack-of-zero-columns or vstack of the equality block.
+    ncol = 2 * n + k
+    A_wt, l_wt, u_wt = _build_constraint_matrix(
+        spec, n, cost_scale, w0_arr, no_trade_band, n_cols=ncol
+    )
+    A_wt = A_wt.tocoo()
     m = A_wt.shape[0]
-    A_wt_wide = sp.hstack([A_wt, sp.csr_matrix((m, k))], format="csr")
 
     # --- k rows: y_j − (Bᵀw)_j = 0  for j = 0..k-1 ---
-    # Bᵀ is (k × n), so the w part of each row is -Bᵀ[j, :] (1 × n).
-    # The t part is 0 (1 × n).
-    # The y part is e_j (standard basis, 1 × k).
-    B_arr = np.asarray(B, dtype=float)  # (n, k)
-    Bt = B_arr.T  # (k, n)
-    neg_Bt = sp.csr_matrix(-Bt)  # (k, n)
-    zero_t_block = sp.csr_matrix((k, n))
-    eye_y = sp.eye(k, format="csr")
-    A_y_eq = sp.hstack([neg_Bt, zero_t_block, eye_y], format="csr")  # (k, 2n+k)
+    # The w part of row j is -Bᵀ[j, :] (dense, k·n nonzeros); the y part is e_j.
+    Bt = np.asarray(B, dtype=float).T  # (k, n)
+    ar_n = np.arange(n)
+    eq_rows = np.concatenate([np.repeat(m + np.arange(k), n), m + np.arange(k)])
+    eq_cols = np.concatenate([np.tile(ar_n, k), 2 * n + np.arange(k)])
+    eq_data = np.concatenate([-Bt.ravel(), np.ones(k)])
 
-    A = sp.vstack([A_wt_wide, A_y_eq]).tocsc()
+    A = sp.csc_matrix(
+        (
+            np.concatenate([A_wt.data, eq_data]),
+            (np.concatenate([A_wt.row, eq_rows]), np.concatenate([A_wt.col, eq_cols])),
+        ),
+        shape=(m + k, ncol),
+    )
     l_vec = np.concatenate([l_wt, np.zeros(k)])
     u_vec = np.concatenate([u_wt, np.zeros(k)])
 
